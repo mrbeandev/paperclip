@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
-import type { Request as ExpressRequest, RequestHandler } from "express";
+import type { Request as ExpressRequest } from "express";
+import type { Router } from "express";
 import { and, eq } from "drizzle-orm";
 import {
   createDb,
@@ -29,17 +30,6 @@ import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup } from "./
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
-
-type BetterAuthSessionUser = {
-  id: string;
-  email?: string | null;
-  name?: string | null;
-};
-
-type BetterAuthSessionResult = {
-  session: { id: string; userId: string } | null;
-  user: BetterAuthSessionUser | null;
-};
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -408,12 +398,12 @@ export async function startServer(): Promise<StartedServer> {
   }
   
   let authReady = config.deploymentMode === "local_trusted";
-  let betterAuthHandler: RequestHandler | undefined;
+  let authRouter: ReturnType<typeof Router> | undefined;
   let resolveSession:
-    | ((req: ExpressRequest) => Promise<BetterAuthSessionResult | null>)
+    | ((req: ExpressRequest) => Promise<import("./auth/better-auth.js").BetterAuthSessionResult | null>)
     | undefined;
   let resolveSessionFromHeaders:
-    | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
+    | ((headers: Headers) => Promise<import("./auth/better-auth.js").BetterAuthSessionResult | null>)
     | undefined;
   if (config.deploymentMode === "local_trusted") {
     await ensureLocalTrustedBoardPrincipal(db as any);
@@ -426,33 +416,17 @@ export async function startServer(): Promise<StartedServer> {
       resolveBetterAuthSession,
       resolveBetterAuthSessionFromHeaders,
     } = await import("./auth/better-auth.js");
-    const betterAuthSecret =
-      process.env.BETTER_AUTH_SECRET?.trim() ?? process.env.PAPERCLIP_AGENT_JWT_SECRET?.trim();
-    if (!betterAuthSecret) {
-      throw new Error(
-        "authenticated mode requires BETTER_AUTH_SECRET (or PAPERCLIP_AGENT_JWT_SECRET) to be set",
-      );
-    }
     const derivedTrustedOrigins = deriveAuthTrustedOrigins(config);
-    const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    const effectiveTrustedOrigins = Array.from(new Set([...derivedTrustedOrigins, ...envTrustedOrigins]));
     logger.info(
       {
         authBaseUrlMode: config.authBaseUrlMode,
         authPublicBaseUrl: config.authPublicBaseUrl ?? null,
-        trustedOrigins: effectiveTrustedOrigins,
-        trustedOriginsSource: {
-          derived: derivedTrustedOrigins.length,
-          env: envTrustedOrigins.length,
-        },
+        trustedOrigins: derivedTrustedOrigins,
       },
       "Authenticated mode auth origin configuration",
     );
-    const auth = createBetterAuthInstance(db as any, config, effectiveTrustedOrigins);
-    betterAuthHandler = createBetterAuthHandler(auth);
+    const auth = createBetterAuthInstance(db as any, config);
+    authRouter = createBetterAuthHandler(auth);
     resolveSession = (req) => resolveBetterAuthSession(auth, req);
     resolveSessionFromHeaders = (headers) => resolveBetterAuthSessionFromHeaders(auth, headers);
     await initializeBoardClaimChallenge(db as any, { deploymentMode: config.deploymentMode });
@@ -472,7 +446,7 @@ export async function startServer(): Promise<StartedServer> {
     bindHost: config.host,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
-    betterAuthHandler,
+    authRouter,
     resolveSession,
   });
   const server = createServer(app as unknown as Parameters<typeof createServer>[0]);

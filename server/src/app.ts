@@ -62,7 +62,7 @@ export async function createApp(
     instanceId?: string;
     hostVersion?: string;
     localPluginDir?: string;
-    betterAuthHandler?: express.RequestHandler;
+    authRouter?: ReturnType<typeof Router>;
     resolveSession?: (req: ExpressRequest) => Promise<BetterAuthSessionResult | null>;
   },
 ) {
@@ -110,8 +110,8 @@ export async function createApp(
       },
     });
   });
-  if (opts.betterAuthHandler) {
-    app.all("/api/auth/*authPath", opts.betterAuthHandler);
+  if (opts.authRouter) {
+    app.use("/api/auth", opts.authRouter);
   }
   app.use(llmRoutes(db));
 
