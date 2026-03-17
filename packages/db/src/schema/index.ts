@@ -47,3 +47,5 @@ export { pluginEntities } from "./plugin_entities.js";
 export { pluginJobs, pluginJobRuns } from "./plugin_jobs.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { pluginLogs } from "./plugin_logs.js";
+export { teamAccessGrants } from "./team_access_grants.js";
+export { teamAccessGrantAgents } from "./team_access_grant_agents.js";

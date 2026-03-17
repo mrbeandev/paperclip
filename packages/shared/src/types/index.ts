@@ -1,4 +1,5 @@
 export type { Company } from "./company.js";
+export type { TeamAccessGrant, TeamAccessGrantAgent, TeamAccessGrantStatus, TeamMember } from "./team.js";
 export type {
   Agent,
   AgentPermissions,

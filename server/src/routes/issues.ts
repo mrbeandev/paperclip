@@ -28,6 +28,7 @@ import {
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { expandAgentSubtrees } from "../services/agent-subtree.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 
@@ -232,6 +233,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
       labelId: req.query.labelId as string | undefined,
       q: req.query.q as string | undefined,
     });
+
+    // If this actor has team-scoped access, filter issues to those assigned to their visible agents
+    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
+    if (scopeRoots) {
+      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
+      res.json(result.filter((issue) => !issue.assigneeAgentId || subtree.has(issue.assigneeAgentId)));
+      return;
+    }
+
     res.json(result);
   });
 
@@ -645,6 +655,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
       await assertCanAssignTasks(req, companyId);
     }
 
+    // Validate that the assigneeAgentId is within this actor's scope (if scoped)
+    const createScopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
+    if (createScopeRoots && req.body.assigneeAgentId) {
+      const subtree = await expandAgentSubtrees(db, createScopeRoots, companyId);
+      if (!subtree.has(req.body.assigneeAgentId as string)) {
+        res.status(403).json({ error: "Assignee agent is outside your accessible scope" });
+        return;
+      }
+    }
+
     const actor = getActorInfo(req);
     const issue = await svc.create(companyId, {
       ...req.body,
@@ -707,6 +727,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
         await assertCanAssignTasks(req, existing.companyId);
       }
     }
+
+    // Validate the new assigneeAgentId is within this actor's scope (if scoped)
+    const patchScopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[existing.companyId] : undefined;
+    if (patchScopeRoots && req.body.assigneeAgentId) {
+      const subtree = await expandAgentSubtrees(db, patchScopeRoots, existing.companyId);
+      if (!subtree.has(req.body.assigneeAgentId as string)) {
+        res.status(403).json({ error: "Assignee agent is outside your accessible scope" });
+        return;
+      }
+    }
+
     if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
 
     const { comment: commentBody, hiddenAt: hiddenAtRaw, ...updateFields } = req.body;

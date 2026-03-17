@@ -13,6 +13,8 @@ declare global {
         keyId?: string;
         runId?: string;
         source?: "local_implicit" | "session" | "agent_key" | "agent_jwt" | "none";
+        /** Populated for team-scoped users. Maps companyId → root agent IDs. */
+        agentScopeRoots?: Record<string, string[]>;
       };
     }
   }

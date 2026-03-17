@@ -1,5 +1,6 @@
 export { companyService } from "./companies.js";
 export { agentService, deduplicateAgentName } from "./agents.js";
+export { teamMemberService } from "./team-members.js";
 export { assetService } from "./assets.js";
 export { documentService, extractLegacyPlanBody } from "./documents.js";
 export { projectService } from "./projects.js";

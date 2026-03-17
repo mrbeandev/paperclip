@@ -226,6 +226,10 @@ export type {
   PluginWebhookDeliveryRecord,
   QuotaWindow,
   ProviderQuotaResult,
+  TeamAccessGrant,
+  TeamAccessGrantAgent,
+  TeamAccessGrantStatus,
+  TeamMember,
 } from "./types/index.js";
 
 export {
@@ -379,6 +383,10 @@ export {
   type PluginStateScopeKey,
   type SetPluginState,
   type ListPluginState,
+  createTeamMemberSchema,
+  updateTeamMemberSchema,
+  type CreateTeamMember,
+  type UpdateTeamMember,
 } from "./validators/index.js";
 
 export { API_PREFIX, API } from "./api.js";

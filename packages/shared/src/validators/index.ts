@@ -6,6 +6,13 @@ export {
 } from "./budget.js";
 
 export {
+  createTeamMemberSchema,
+  updateTeamMemberSchema,
+  type CreateTeamMember,
+  type UpdateTeamMember,
+} from "./team.js";
+
+export {
   createCompanySchema,
   updateCompanySchema,
   type CreateCompany,

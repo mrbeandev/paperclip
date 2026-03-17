@@ -32,6 +32,7 @@ import {
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { expandAgentSubtrees } from "../services/agent-subtree.js";
 import { findServerAdapter, listAdapterModels } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -464,7 +465,15 @@ export function agentRoutes(db: Db) {
   router.get("/companies/:companyId/agents", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const result = await svc.list(companyId);
+    let result = await svc.list(companyId);
+
+    // If this actor has team-scoped access, filter to their visible subtree only
+    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
+    if (scopeRoots) {
+      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
+      result = result.filter((agent) => subtree.has(agent.id));
+    }
+
     const canReadConfigs = await actorCanReadConfigurationsForCompany(req, companyId);
     if (canReadConfigs || req.actor.type === "board") {
       res.json(result);
@@ -552,7 +561,15 @@ export function agentRoutes(db: Db) {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const tree = await svc.orgForCompany(companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
+    let leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
+
+    // If this actor has team-scoped access, filter org tree to their visible subtree
+    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
+    if (scopeRoots) {
+      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
+      leanTree = leanTree.filter((node) => subtree.has(String(node["id"])));
+    }
+
     res.json(leanTree);
   });
 
