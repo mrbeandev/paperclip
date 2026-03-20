@@ -1047,10 +1047,10 @@ function ProjectAssignments({ projectId, readOnly = false }: { projectId: string
     [assignments],
   );
 
-  // Exclude owners — they always have access, no need to assign them
+  // Exclude admins — they always have access, no need to assign them
   const humanMembers = useMemo(
     () => (members ?? []).filter(
-      (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "owner",
+      (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "admin" && m.membershipRole !== "owner",
     ),
     [members],
   );
@@ -1126,7 +1126,7 @@ function ProjectAssignments({ projectId, readOnly = false }: { projectId: string
                       onChange={() => togglePrincipal(key)}
                     />
                     <span className="text-sm">{m.userName ?? m.userEmail ?? "Unknown"}</span>
-                    {m.membershipRole === "owner" && (
+                    {(m.membershipRole === "admin" || m.membershipRole === "owner") && (
                       <span className="text-[10px] text-muted-foreground ml-1">(owner)</span>
                     )}
                   </label>

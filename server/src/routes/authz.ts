@@ -29,8 +29,8 @@ export async function assertOwner(req: Request, companyId: string) {
       ),
     )
     .then((rows) => rows[0] ?? null);
-  if (!membership || membership.membershipRole !== "owner") {
-    throw forbidden("Owner access required");
+  if (!membership || (membership.membershipRole !== "owner" && membership.membershipRole !== "admin")) {
+    throw forbidden("Admin access required");
   }
 }
 

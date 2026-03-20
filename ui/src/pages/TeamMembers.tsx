@@ -274,8 +274,8 @@ export function TeamMembers() {
                       <StatusPill status={member.status} />
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {member.membershipRole === "owner" ? (
-                        <span className="font-medium text-foreground">Owner</span>
+                      {member.membershipRole === "admin" ? (
+                        <span className="font-medium text-foreground">Admin</span>
                       ) : (
                         member.membershipRole ?? "member"
                       )}

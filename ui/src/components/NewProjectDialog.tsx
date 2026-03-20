@@ -87,9 +87,9 @@ export function NewProjectDialog() {
     enabled: !!selectedCompanyId && newProjectOpen,
   });
 
-  // Exclude owners — they always have access
+  // Exclude admins — they always have access
   const humanMembers = (companyMembers ?? []).filter(
-    (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "owner",
+    (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "admin" && m.membershipRole !== "owner",
   );
   const activeAgents = (companyAgents ?? []).filter((a) => a.status !== "terminated");
 

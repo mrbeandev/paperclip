@@ -583,7 +583,7 @@ function HierarchySection({ companyId }: { companyId: string }) {
     ? allHumans
     : allHumans.filter((m: CompanyMember) => {
         if (m.principalId === currentUserId) return true; // always see yourself
-        if (m.membershipRole === "owner") return false; // never show owners to members
+        if (m.membershipRole === "admin" || m.membershipRole === "owner") return false; // never show admins to non-full-access users
         if (subordinates?.isTopLevel) return true;
         return subordinates?.userIds.includes(m.principalId) ?? false;
       });

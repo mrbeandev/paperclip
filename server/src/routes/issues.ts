@@ -136,12 +136,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   async function assertIssueProjectAccess(req: Request, issue: { companyId: string; projectId: string | null }) {
     if (req.actor.type !== "board" || !req.actor.userId || req.actor.isInstanceAdmin || req.actor.source === "local_implicit") return;
-    const membership = await db
-      .select({ membershipRole: companyMemberships.membershipRole })
-      .from(companyMemberships)
-      .where(and(eq(companyMemberships.companyId, issue.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, req.actor.userId)))
-      .then((rows) => rows[0] ?? null);
-    if (!membership || membership.membershipRole === "owner") return;
+    const canViewAll = await access.hasRolePermission(issue.companyId, "user", req.actor.userId, "dashboard:view_full");
+    if (canViewAll) return;
     if (!issue.projectId) throw forbidden("You cannot access issues without a project");
     const companyRow = await db.select({ metadata: companies.metadata }).from(companies).where(eq(companies.id, issue.companyId)).then((rows) => rows[0] ?? null);
     const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
@@ -289,21 +285,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     }
 
-    // Scope issues by project assignment for non-owner members
-    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit") {
-      const membership = await db
-        .select({ membershipRole: companyMemberships.membershipRole })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, companyId),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, req.actor.userId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
-
-      if (membership && membership.membershipRole !== "owner") {
+    // Scope issues by project assignment for non-full-access members
+    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit" && !req.actor.isInstanceAdmin) {
+      const canViewAll = await access.hasRolePermission(companyId, "user", req.actor.userId, "dashboard:view_full");
+      if (!canViewAll) {
         const companyRow = await db
           .select({ metadata: companies.metadata })
           .from(companies)
@@ -740,14 +725,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       await assertCanAssignTasks(req, companyId);
     }
 
-    // Validate project access for non-owner members
+    // Validate project access for non-full-access members
     if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
-      const membership = await db
-        .select({ membershipRole: companyMemberships.membershipRole })
-        .from(companyMemberships)
-        .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, req.actor.userId)))
-        .then((rows) => rows[0] ?? null);
-      if (membership && membership.membershipRole !== "owner") {
+      const canViewAllForCreate = await access.hasRolePermission(companyId, "user", req.actor.userId, "dashboard:view_full");
+      if (!canViewAllForCreate) {
         const companyRow = await db.select({ metadata: companies.metadata }).from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null);
         const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
         const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;

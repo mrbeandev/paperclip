@@ -9,6 +9,7 @@ import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -66,21 +67,18 @@ export function Dashboard() {
     enabled: !!selectedCompanyId,
   });
 
-  const isOwner = useMemo(() => {
-    if (!session?.user || !members) return true; // default allow while loading
-    const me = members.find((m) => m.principalType === "user" && m.principalId === session.user.id);
-    return me?.membershipRole === "owner";
-  }, [session, members]);
+  const { hasPermission: hasDashPerm } = useMyPermissions();
+  const isFullAccess = hasDashPerm("dashboard:view_full");
 
   // For members: filter agents to only visible ones (subordinates)
   const agents = useMemo(() => {
     if (!allAgents) return undefined;
-    if (isOwner) return allAgents;
+    if (isFullAccess) return allAgents;
     if (!subordinates) return allAgents;
     if (subordinates.isTopLevel) return allAgents;
     const allowed = new Set(subordinates.agentIds);
     return allAgents.filter((a) => allowed.has(a.id));
-  }, [allAgents, isOwner, subordinates]);
+  }, [allAgents, isFullAccess, subordinates]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Dashboard" }]);
@@ -121,7 +119,7 @@ export function Dashboard() {
   // For members: filter activity to their own actions + their agents' actions
   const recentActivity = useMemo(() => {
     const all = activity ?? [];
-    if (isOwner || !subordinates || subordinates.isTopLevel) return all.slice(0, 10);
+    if (isFullAccess || !subordinates || subordinates.isTopLevel) return all.slice(0, 10);
     const allowedAgents = new Set(subordinates.agentIds);
     const userId = session?.user?.id;
     return all
@@ -131,7 +129,7 @@ export function Dashboard() {
         return false;
       })
       .slice(0, 10);
-  }, [activity, isOwner, subordinates, session]);
+  }, [activity, isFullAccess, subordinates, session]);
 
   useEffect(() => {
     for (const timer of activityAnimationTimersRef.current) {
@@ -259,7 +257,7 @@ export function Dashboard() {
       <ActiveAgentsPanel
         companyId={selectedCompanyId!}
         visibleAgentIds={
-          !isOwner && subordinates && !subordinates.isTopLevel
+          !isFullAccess && subordinates && !subordinates.isTopLevel
             ? new Set(subordinates.agentIds)
             : null
         }
@@ -275,16 +273,16 @@ export function Dashboard() {
         const scopedOpen = (issues ?? []).filter((i: any) => i.status !== "done" && i.status !== "cancelled").length;
         const scopedBlocked = (issues ?? []).filter((i: any) => i.status === "blocked").length;
 
-        const agentTotal = isOwner ? (data.agents.active + data.agents.running + data.agents.paused + data.agents.error) : scopedAgentCount;
-        const agentRunning = isOwner ? data.agents.running : scopedRunning;
-        const agentPaused = isOwner ? data.agents.paused : scopedPaused;
-        const agentErrors = isOwner ? data.agents.error : scopedErrors;
-        const tasksInProgress = isOwner ? data.tasks.inProgress : scopedInProgress;
-        const tasksOpen = isOwner ? data.tasks.open : scopedOpen;
-        const tasksBlocked = isOwner ? data.tasks.blocked : scopedBlocked;
+        const agentTotal = isFullAccess ? (data.agents.active + data.agents.running + data.agents.paused + data.agents.error) : scopedAgentCount;
+        const agentRunning = isFullAccess ? data.agents.running : scopedRunning;
+        const agentPaused = isFullAccess ? data.agents.paused : scopedPaused;
+        const agentErrors = isFullAccess ? data.agents.error : scopedErrors;
+        const tasksInProgress = isFullAccess ? data.tasks.inProgress : scopedInProgress;
+        const tasksOpen = isFullAccess ? data.tasks.open : scopedOpen;
+        const tasksBlocked = isFullAccess ? data.tasks.blocked : scopedBlocked;
 
         return <>
-          {isOwner && data.budgets.activeIncidents > 0 ? (
+          {isFullAccess && data.budgets.activeIncidents > 0 ? (
             <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(255,80,80,0.12),rgba(255,255,255,0.02))] px-4 py-3">
               <div className="flex items-start gap-2.5">
                 <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
@@ -329,7 +327,7 @@ export function Dashboard() {
                 </span>
               }
             />
-            {isOwner && (
+            {isFullAccess && (
               <MetricCard
                 icon={DollarSign}
                 value={formatCents(data.costs.monthSpendCents)}
@@ -344,7 +342,7 @@ export function Dashboard() {
                 }
               />
             )}
-            {isOwner && (
+            {isFullAccess && (
               <MetricCard
                 icon={ShieldCheck}
                 value={data.pendingApprovals + data.budgets.pendingApprovals}

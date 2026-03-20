@@ -136,7 +136,7 @@ export async function claimBoardOwnership(
           principalType: "user",
           principalId: opts.userId,
           status: "active",
-          membershipRole: "owner",
+          membershipRole: "admin",
         });
         continue;
       }

@@ -246,8 +246,8 @@ function CompanyAccessGate() {
     const me = members.find(
       (m) => m.principalType === "user" && m.principalId === session.user.id,
     );
-    // Only apply assignment check to non-owner members
-    if (me && me.membershipRole !== "owner") {
+    // Only apply assignment check to non-admin members
+    if (me && me.membershipRole !== "admin" && me.membershipRole !== "owner") {
       const hasHierarchy = !!(me.reportsToUserId || me.reportsToAgentId) ||
         members.some((m) => m.reportsToUserId === session.user.id);
       const hasProjects = (projects ?? []).length > 0;

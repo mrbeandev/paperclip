@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
-import { authUsers } from "@paperclipai/db";
+import { authUsers, companyMemberships } from "@paperclipai/db";
 import {
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
@@ -123,7 +123,16 @@ export function companyRoutes(db: Db) {
     const company = await svc.create(req.body);
     // Only create membership for real authenticated users, not the synthetic local-board actor
     if (req.actor.userId && req.actor.userId !== "local-board") {
-      await access.ensureMembership(company.id, "user", req.actor.userId, "owner", "active");
+      await access.ensureMembership(company.id, "user", req.actor.userId, "admin", "active");
+      // Seed default roles for the new company and assign admin role
+      await access.seedDefaultRoles(company.id);
+      const adminRole = await access.getRoleBySlug(company.id, "admin");
+      if (adminRole) {
+        const membership = await access.getMembership(company.id, "user", req.actor.userId);
+        if (membership) {
+          await db.update(companyMemberships).set({ roleId: adminRole.id }).where(eq(companyMemberships.id, membership.id));
+        }
+      }
     }
     await logActivity(db, {
       companyId: company.id,
@@ -210,8 +219,8 @@ export function companyRoutes(db: Db) {
     if (!currentUserId) throw forbidden("No user ID");
 
     const membership = await access.getMembership(companyId, "user", currentUserId);
-    if (!membership || membership.membershipRole !== "owner") {
-      throw forbidden("Only the owner can view transfer targets");
+    if (!membership || membership.membershipRole !== "admin") {
+      throw forbidden("Only the admin can view transfer targets");
     }
 
     const members = await access.listMembers(companyId);
@@ -249,8 +258,8 @@ export function companyRoutes(db: Db) {
     }
 
     const myMembership = await access.getMembership(companyId, "user", currentUserId);
-    if (!myMembership || myMembership.membershipRole !== "owner") {
-      throw forbidden("Only the owner can transfer ownership");
+    if (!myMembership || myMembership.membershipRole !== "admin") {
+      throw forbidden("Only the admin can transfer ownership");
     }
 
     const targetMembership = await access.getMembership(companyId, "user", targetUserId);
@@ -259,8 +268,17 @@ export function companyRoutes(db: Db) {
       return;
     }
 
-    await access.ensureMembership(companyId, "user", targetUserId, "owner", "active");
-    await access.ensureMembership(companyId, "user", currentUserId, "member", "active");
+    // Transfer: target becomes admin, current becomes employee
+    const adminRole = await access.getRoleBySlug(companyId, "admin");
+    const employeeRole = await access.getRoleBySlug(companyId, "employee");
+    await access.ensureMembership(companyId, "user", targetUserId, "admin", "active");
+    if (adminRole) {
+      await db.update(companyMemberships).set({ roleId: adminRole.id }).where(eq(companyMemberships.id, targetMembership.id));
+    }
+    await access.ensureMembership(companyId, "user", currentUserId, "employee", "active");
+    if (employeeRole) {
+      await db.update(companyMemberships).set({ roleId: employeeRole.id }).where(eq(companyMemberships.id, myMembership.id));
+    }
 
     res.json({ ok: true });
   });

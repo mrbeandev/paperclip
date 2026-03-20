@@ -10,13 +10,14 @@ import {
   updateProjectWorkspaceSchema,
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
-import { projectService, logActivity } from "../services/index.js";
+import { projectService, accessService, logActivity } from "../services/index.js";
 import { conflict } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertPermission, getActorInfo } from "./authz.js";
 
 export function projectRoutes(db: Db) {
   const router = Router();
   const svc = projectService(db);
+  const access = accessService(db);
 
   async function resolveCompanyIdForProjectReference(req: Request) {
     const companyIdQuery = req.query.companyId;
@@ -59,22 +60,10 @@ export function projectRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     let result = await svc.list(companyId);
 
-    // Scope projects for non-owner members based on projectAssignments in company metadata
-    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit") {
-      const membership = await db
-        .select({ membershipRole: companyMemberships.membershipRole })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, companyId),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, req.actor.userId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
-
-      // Only scope if member is NOT an owner (owners see everything)
-      if (membership && membership.membershipRole !== "owner") {
+    // Scope projects for non-full-access members
+    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit" && !req.actor.isInstanceAdmin) {
+      const canViewAll = await access.hasRolePermission(companyId, "user", req.actor.userId, "dashboard:view_full");
+      if (!canViewAll) {
         const companyRow = await db
           .select({ metadata: companies.metadata })
           .from(companies)
