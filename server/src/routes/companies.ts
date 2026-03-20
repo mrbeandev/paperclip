@@ -280,6 +280,10 @@ export function companyRoutes(db: Db) {
       await db.update(companyMemberships).set({ roleId: employeeRole.id }).where(eq(companyMemberships.id, myMembership.id));
     }
 
+    // Transfer instance admin role: promote target, demote current
+    await access.promoteInstanceAdmin(targetUserId);
+    await access.demoteInstanceAdmin(currentUserId);
+
     res.json({ ok: true });
   });
 
