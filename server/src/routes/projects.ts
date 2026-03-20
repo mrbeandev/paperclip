@@ -122,6 +122,25 @@ export function projectRoutes(db: Db) {
     }
     const hydratedProject = workspace ? await svc.getById(project.id) : project;
 
+    // Auto-assign the project to the creator (so non-admin users can see their own project)
+    if (req.actor.type === "board" && req.actor.userId) {
+      const canViewAll = await access.hasRolePermission(companyId, "user", req.actor.userId, "dashboard:view_full");
+      if (!canViewAll) {
+        // Non-full-access user: auto-assign this project to them
+        const companyRow = await db
+          .select({ metadata: companies.metadata })
+          .from(companies)
+          .where(eq(companies.id, companyId))
+          .then((rows) => rows[0] ?? null);
+        const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+        const assignments = { ...((meta.projectAssignments ?? {}) as Record<string, string[]>) };
+        const userKey = `user:${req.actor.userId}`;
+        if (!assignments[userKey]) assignments[userKey] = [];
+        if (!assignments[userKey].includes(project.id)) assignments[userKey].push(project.id);
+        await db.update(companies).set({ metadata: { ...meta, projectAssignments: assignments } }).where(eq(companies.id, companyId));
+      }
+    }
+
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId,

@@ -9,9 +9,9 @@
 
 ## Pre-requisites
 
-- [ ] Reset the database (clean slate)
-- [ ] Run `pnpm paperclipai onboard` — should default to `authenticated` mode
-- [ ] Start dev server
+- [x] Reset the database (clean slate)
+- [x] Run `pnpm paperclipai onboard` — should default to `authenticated` mode
+- [x] Start dev server
 
 ---
 
@@ -229,11 +229,11 @@ Test by calling APIs directly (e.g., curl) as an employee:
 
 | Category | Total Tests | Pass | Fail | Notes |
 |----------|------------|------|------|-------|
-| Bootstrap & Admin Setup | 7 | | | |
-| Invite & Member Join | 6 | | | |
-| Role Assignment | 4 | | | |
-| Custom Roles | 9 | | | |
-| Admin Permissions | 10 | | | |
+| Bootstrap & Admin Setup | 7 |x| | working exactly as expected |
+| Invite & Member Join | 6 |x| | working exactly as expected |
+| Role Assignment | 4 |x| | working exactly as expected |
+| Custom Roles | 9 |x| | all role permisions seems to be working well. found few bugs: when the employee dont have permission to create agents why is the dashboard showing this alert - 'You have no agents.  [create on here]' altho this is not working when he clicks on that button and goes to the nest bot creation form and clicks on create its blocking him correctly so thats working but hide this alert also in the dashboard if he dont have permission. and in projects form auto assign it to the member who is creating it ! if a member or manager is creating it. cause in the members acccount i created a project and forgot to assign it to me and after creating its gone ! i couldnt see it in my ui , so we must auto assign it. |
+| Admin Permissions | 10 |x| | working well , but 1 issues after i transferred the ownership to a employee i was changed to employee and logedout too ! but after login i was still seeing all of the pages and everything just like admin , but when i checked my role it was showing as employee only !! check the attached image. |
 | Manager Permissions | 10 | | | |
 | Employee Permissions | 10 | | | |
 | Employee Project/Issue Scoping | 7 | | | |
