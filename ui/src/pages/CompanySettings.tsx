@@ -1195,25 +1195,32 @@ function RolesSection({ companyId }: { companyId: string }) {
         <div>
           <p className="text-[11px] font-medium text-muted-foreground mb-2">Member Roles</p>
           <div className="space-y-1.5">
-            {humanMembers.map((member) => (
-              <div key={member.id} className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/30">
-                <span className="text-sm">{member.userName ?? member.userEmail ?? "Unknown"}</span>
-                <select
-                  className="text-xs bg-transparent border border-border rounded px-2 py-1 outline-none"
-                  value={roles.find((r) => r.slug === member.membershipRole)?.id ?? ""}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      assignRoleMutation.mutate({ memberId: member.id, roleId: e.target.value });
-                    }
-                  }}
-                  disabled={assignRoleMutation.isPending}
-                >
-                  {roles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.displayName}</option>
-                  ))}
-                </select>
-              </div>
-            ))}
+            {humanMembers.map((member) => {
+              const isAdmin = member.membershipRole === "admin" || member.membershipRole === "owner";
+              return (
+                <div key={member.id} className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/30">
+                  <span className="text-sm">{member.userName ?? member.userEmail ?? "Unknown"}</span>
+                  {isAdmin ? (
+                    <span className="text-xs text-muted-foreground px-2 py-1">Admin (use Transfer Ownership to change)</span>
+                  ) : (
+                    <select
+                      className="text-xs bg-transparent border border-border rounded px-2 py-1 outline-none"
+                      value={roles.find((r) => r.slug === member.membershipRole)?.id ?? ""}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          assignRoleMutation.mutate({ memberId: member.id, roleId: e.target.value });
+                        }
+                      }}
+                      disabled={assignRoleMutation.isPending}
+                    >
+                      {roles.map((role) => (
+                        <option key={role.id} value={role.id}>{role.displayName}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

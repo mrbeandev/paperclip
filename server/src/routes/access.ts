@@ -2899,6 +2899,13 @@ export function accessRoutes(
     await assertCompanyPermission(req, companyId, "users:manage_permissions");
     const { roleId } = req.body as { roleId: string };
     if (!roleId) { res.status(400).json({ error: "roleId is required" }); return; }
+    // Block role changes for admin members — must use Transfer Ownership
+    const targetMembership = await access.getMembership(companyId, "user", memberId)
+      ?? (await access.listMembers(companyId)).find((m) => m.id === memberId);
+    if (targetMembership && (targetMembership.membershipRole === "admin" || targetMembership.membershipRole === "owner")) {
+      res.status(403).json({ error: "Admin role cannot be changed here. Use Transfer Ownership instead." });
+      return;
+    }
     const role = (await access.listRoles(companyId)).find((r) => r.id === roleId);
     if (!role) { res.status(404).json({ error: "Role not found" }); return; }
     await db.update(companyMemberships)
