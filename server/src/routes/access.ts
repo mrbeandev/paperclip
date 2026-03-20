@@ -2702,10 +2702,24 @@ export function accessRoutes(
       res.json({ userIds: [], agentIds: [], isTopLevel: true });
       return;
     }
-    // Non-owner members with no hierarchy get their subordinates (likely empty)
+    // Get subordinates + peers if user has tasks:assign_peers permission
     const subordinates = membership
       ? await access.getSubordinates(companyId, req.actor.userId)
       : { userIds: [], agentIds: [] };
+
+    const canAssignPeers = membership
+      ? await access.hasRolePermission(companyId, "user", req.actor.userId, "tasks:assign_peers")
+      : false;
+
+    if (canAssignPeers) {
+      const peerAgents = await access.getPeerAgentIds(companyId, req.actor.userId);
+      const peerUsers = await access.getPeerUserIds(companyId, req.actor.userId);
+      const allAgentIds = [...new Set([...subordinates.agentIds, ...peerAgents])];
+      const allUserIds = [...new Set([...subordinates.userIds, ...peerUsers])];
+      res.json({ userIds: allUserIds, agentIds: allAgentIds, isTopLevel: false });
+      return;
+    }
+
     res.json({ ...subordinates, isTopLevel: false });
   });
 

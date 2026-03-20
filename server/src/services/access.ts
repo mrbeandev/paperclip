@@ -336,7 +336,16 @@ export function accessService(db: Db) {
     if (canViewAll && !membership.reportsToUserId && !membership.reportsToAgentId) return null;
     // Non-owner members with no hierarchy see nothing (empty array)
     const subordinates = await getSubordinates(companyId, userId);
-    return subordinates.agentIds;
+    const ids = new Set(subordinates.agentIds);
+
+    // If user has tasks:assign_peers, also include peer agents
+    const canAssignPeers = await hasRolePermission(companyId, "user", userId, "tasks:assign_peers");
+    if (canAssignPeers) {
+      const peers = await getPeerAgentIds(companyId, userId);
+      for (const id of peers) ids.add(id);
+    }
+
+    return Array.from(ids);
   }
 
   /**
