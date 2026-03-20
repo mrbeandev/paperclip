@@ -3,7 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { createGoalSchema, updateGoalSchema } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { goalService, logActivity } from "../services/index.js";
-import { assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
+import { assertCompanyAccess, assertPermission, getActorInfo } from "./authz.js";
 
 export function goalRoutes(db: Db) {
   const router = Router();
@@ -29,7 +29,7 @@ export function goalRoutes(db: Db) {
 
   router.post("/companies/:companyId/goals", validate(createGoalSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertOwner(req, companyId);
+    await assertPermission(req, companyId, "goals:create");
     const goal = await svc.create(companyId, req.body);
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -52,7 +52,7 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    await assertOwner(req, existing.companyId);
+    await assertPermission(req, existing.companyId, "goals:update");
     const goal = await svc.update(id, req.body);
     if (!goal) {
       res.status(404).json({ error: "Goal not found" });
@@ -81,7 +81,7 @@ export function goalRoutes(db: Db) {
       res.status(404).json({ error: "Goal not found" });
       return;
     }
-    await assertOwner(req, existing.companyId);
+    await assertPermission(req, existing.companyId, "goals:delete");
     const goal = await svc.remove(id);
     if (!goal) {
       res.status(404).json({ error: "Goal not found" });

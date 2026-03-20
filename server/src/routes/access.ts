@@ -14,6 +14,9 @@ import type { Db } from "@paperclipai/db";
 import {
   agentApiKeys,
   authUsers,
+  companyMemberships,
+  companyRoles as companyRolesTable,
+  companyRolePermissions as companyRolePermissionsTable,
   instanceUserRoles,
   invites,
   joinRequests
@@ -2693,8 +2696,9 @@ export function accessRoutes(
     }
     const membership = await access.getMembership(companyId, "user", req.actor.userId);
     const hasNoParent = !membership || (!membership.reportsToUserId && !membership.reportsToAgentId);
-    // Only owners with no parent are truly top-level
-    if (hasNoParent && membership?.membershipRole === "owner") {
+    // Users with dashboard:view_full permission and no parent are truly top-level
+    const canViewAll = membership ? await access.hasRolePermission(companyId, "user", req.actor.userId, "dashboard:view_full") : false;
+    if (hasNoParent && canViewAll) {
       res.json({ userIds: [], agentIds: [], isTopLevel: true });
       return;
     }
@@ -2787,6 +2791,120 @@ export function accessRoutes(
       result[f] = readAgentTemplate(role, f);
     }
     res.json(result);
+  });
+
+  // ── Roles & Permissions ──────────────────────────────────────────
+
+  router.get("/companies/:companyId/roles", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const roles = await access.listRoles(companyId);
+    const result = await Promise.all(
+      roles.map(async (role) => ({
+        ...role,
+        permissions: await access.getRolePermissions(role.id),
+      })),
+    );
+    res.json(result);
+  });
+
+  router.get("/companies/:companyId/my-permissions", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      res.json([]);
+      return;
+    }
+    if (req.actor.isInstanceAdmin || req.actor.source === "local_implicit") {
+      res.json(PERMISSION_KEYS);
+      return;
+    }
+    const permissions = await access.getMyPermissions(companyId, req.actor.userId);
+    res.json(permissions);
+  });
+
+  router.post("/companies/:companyId/roles", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    const { slug, displayName, permissionKeys } = req.body as {
+      slug: string;
+      displayName: string;
+      permissionKeys: string[];
+    };
+    if (!slug?.trim() || !displayName?.trim()) {
+      res.status(400).json({ error: "slug and displayName are required" });
+      return;
+    }
+    const [role] = await db
+      .insert(companyRolesTable)
+      .values({ companyId, slug: slug.trim().toLowerCase(), displayName: displayName.trim(), isSystem: false })
+      .returning();
+    if (role && permissionKeys?.length > 0) {
+      await db.insert(companyRolePermissionsTable).values(
+        permissionKeys.map((key) => ({ roleId: role.id, permissionKey: key })),
+      ).onConflictDoNothing();
+    }
+    const permissions = role ? await access.getRolePermissions(role.id) : [];
+    res.status(201).json({ ...role, permissions });
+  });
+
+  router.patch("/companies/:companyId/roles/:roleId", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const roleId = req.params.roleId as string;
+    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    const existing = (await access.listRoles(companyId)).find((r) => r.id === roleId);
+    if (!existing) { res.status(404).json({ error: "Role not found" }); return; }
+    if (existing.slug === "admin") { res.status(403).json({ error: "Admin role cannot be modified" }); return; }
+    const { displayName, permissionKeys } = req.body as {
+      displayName?: string;
+      permissionKeys?: string[];
+    };
+    if (displayName) {
+      await db.update(companyRolesTable).set({ displayName, updatedAt: new Date() }).where(eq(companyRolesTable.id, roleId));
+    }
+    if (permissionKeys) {
+      await db.delete(companyRolePermissionsTable).where(eq(companyRolePermissionsTable.roleId, roleId));
+      if (permissionKeys.length > 0) {
+        await db.insert(companyRolePermissionsTable).values(
+          permissionKeys.map((key) => ({ roleId, permissionKey: key })),
+        ).onConflictDoNothing();
+      }
+    }
+    const updated = (await access.listRoles(companyId)).find((r) => r.id === roleId);
+    const permissions = await access.getRolePermissions(roleId);
+    res.json({ ...updated, permissions });
+  });
+
+  router.delete("/companies/:companyId/roles/:roleId", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const roleId = req.params.roleId as string;
+    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    const existing = (await access.listRoles(companyId)).find((r) => r.id === roleId);
+    if (!existing) { res.status(404).json({ error: "Role not found" }); return; }
+    if (existing.isSystem) { res.status(403).json({ error: "System roles cannot be deleted" }); return; }
+    // Reassign members with this role to employee
+    const employeeRole = await access.getRoleBySlug(companyId, "employee");
+    if (employeeRole) {
+      await db.update(companyMemberships)
+        .set({ roleId: employeeRole.id, membershipRole: "employee", updatedAt: new Date() })
+        .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.roleId, roleId)));
+    }
+    await db.delete(companyRolesTable).where(eq(companyRolesTable.id, roleId));
+    res.json({ ok: true });
+  });
+
+  router.patch("/companies/:companyId/members/:memberId/role", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const memberId = req.params.memberId as string;
+    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    const { roleId } = req.body as { roleId: string };
+    if (!roleId) { res.status(400).json({ error: "roleId is required" }); return; }
+    const role = (await access.listRoles(companyId)).find((r) => r.id === roleId);
+    if (!role) { res.status(404).json({ error: "Role not found" }); return; }
+    await db.update(companyMemberships)
+      .set({ roleId, membershipRole: role.slug, updatedAt: new Date() })
+      .where(and(eq(companyMemberships.id, memberId), eq(companyMemberships.companyId, companyId)));
+    res.json({ ok: true, roleId, roleSlug: role.slug });
   });
 
   return router;

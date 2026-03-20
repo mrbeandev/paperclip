@@ -157,6 +157,20 @@ export const accessApi = {
       { claimSecret },
     ),
 
+  listRoles: (companyId: string) =>
+    api.get<Array<{ id: string; companyId: string; slug: string; displayName: string; isSystem: boolean; permissions: string[] }>>(
+      `/companies/${companyId}/roles`,
+    ),
+
+  getMyPermissions: (companyId: string) =>
+    api.get<string[]>(`/companies/${companyId}/my-permissions`),
+
+  updateMemberRole: (companyId: string, memberId: string, roleId: string) =>
+    api.patch<{ ok: true; roleId: string; roleSlug: string }>(
+      `/companies/${companyId}/members/${memberId}/role`,
+      { roleId },
+    ),
+
   getBoardClaimStatus: (token: string, code: string) =>
     api.get<BoardClaimStatus>(`/board-claim/${token}?code=${encodeURIComponent(code)}`),
 

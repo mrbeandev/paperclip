@@ -31,7 +31,7 @@ import {
   secretService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { assertBoard, assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertPermission, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAdapterModels } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -1312,7 +1312,7 @@ export function agentRoutes(db: Db) {
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) { res.status(404).json({ error: "Agent not found" }); return; }
-    await assertOwner(req, existing.companyId);
+    await assertPermission(req, existing.companyId, "agents:manage");
     const agent = await svc.remove(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });

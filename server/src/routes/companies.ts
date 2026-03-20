@@ -18,7 +18,7 @@ import {
   companyService,
   logActivity,
 } from "../services/index.js";
-import { assertBoard, assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertPermission, getActorInfo } from "./authz.js";
 
 export function companyRoutes(db: Db) {
   const router = Router();
@@ -151,7 +151,7 @@ export function companyRoutes(db: Db) {
 
   router.patch("/:companyId", validate(updateCompanySchema), async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertOwner(req, companyId);
+    await assertPermission(req, companyId, "company:update");
     const company = await svc.update(companyId, req.body);
     if (!company) {
       res.status(404).json({ error: "Company not found" });
@@ -171,7 +171,7 @@ export function companyRoutes(db: Db) {
 
   router.post("/:companyId/archive", async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertOwner(req, companyId);
+    await assertPermission(req, companyId, "company:archive");
     const company = await svc.archive(companyId);
     if (!company) {
       res.status(404).json({ error: "Company not found" });
@@ -190,7 +190,7 @@ export function companyRoutes(db: Db) {
 
   router.delete("/:companyId", async (req, res) => {
     const companyId = req.params.companyId as string;
-    await assertOwner(req, companyId);
+    await assertPermission(req, companyId, "company:delete");
     const company = await svc.remove(companyId);
     if (!company) {
       res.status(404).json({ error: "Company not found" });

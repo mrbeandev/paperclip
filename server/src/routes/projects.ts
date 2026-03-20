@@ -12,7 +12,7 @@ import {
 import { validate } from "../middleware/validate.js";
 import { projectService, logActivity } from "../services/index.js";
 import { conflict } from "../errors.js";
-import { assertBoard, assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertPermission, getActorInfo } from "./authz.js";
 
 export function projectRoutes(db: Db) {
   const router = Router();
@@ -157,7 +157,7 @@ export function projectRoutes(db: Db) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertOwner(req, existing.companyId);
+    await assertPermission(req, existing.companyId, "projects:update");
     const project = await svc.update(id, req.body);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
@@ -307,7 +307,7 @@ export function projectRoutes(db: Db) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    await assertOwner(req, existing.companyId);
+    await assertPermission(req, existing.companyId, "projects:delete");
     const project = await svc.remove(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
