@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
-import { authUsers, companyMemberships } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
+import { agents, authUsers, companyMemberships } from "@paperclipai/db";
 import {
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
@@ -283,6 +283,16 @@ export function companyRoutes(db: Db) {
     // Transfer instance admin role: promote target, demote current
     await access.promoteInstanceAdmin(targetUserId);
     await access.demoteInstanceAdmin(currentUserId);
+
+    // Reassign all agents reporting to old admin → new admin
+    await db.update(agents)
+      .set({ reportsToUserId: targetUserId, updatedAt: new Date() })
+      .where(and(eq(agents.companyId, companyId), eq(agents.reportsToUserId, currentUserId)));
+
+    // Reassign all members reporting to old admin → new admin
+    await db.update(companyMemberships)
+      .set({ reportsToUserId: targetUserId, updatedAt: new Date() })
+      .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.reportsToUserId, currentUserId)));
 
     res.json({ ok: true });
   });
