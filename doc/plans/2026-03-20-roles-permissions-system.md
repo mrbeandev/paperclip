@@ -416,6 +416,24 @@ After implementation, verify:
 
 ---
 
+## Known Bugs (To Fix Later)
+
+### Critical
+
+1. **`POST /agents` missing `agents:create` permission check** — `server/src/routes/agents.ts:961`. Only calls `assertCompanyAccess`, not `assertPermission(req, companyId, "agents:create")`. Any company member can create agents via API. Fix: add `await assertPermission(req, companyId, "agents:create")` for board users (agents creating agents still need the existing agent-level check).
+
+2. **`seedDefaultRoles` not called during company import** — `server/src/services/company-portability.ts:856`. Imported companies have no roles in `company_roles` table, causing all permission checks to fail. Fix: call `access.seedDefaultRoles(targetCompany.id)` after company creation in import flow, then assign admin role to creator.
+
+3. **Join request approval doesn't assign a role** — `server/src/routes/access.ts:2324`. When approving a human join request, `ensureMembership()` is called with `membershipRole: "member"` but `roleId` is never set. Members end up with null roleId and zero permissions. Fix: after `ensureMembership`, fetch employee role via `getRoleBySlug(companyId, "employee")` and update the membership's `roleId`.
+
+### Medium
+
+4. **Transfer ownership: old admin's session still cached** — `server/src/routes/companies.ts:284`. After `demoteInstanceAdmin`, the old admin's current Express session still has `isInstanceAdmin: true` from the auth middleware. They can perform admin actions until session expires or re-login. Fix: force session invalidation after transfer (delete session row or set a flag).
+
+5. **Company import sets `membershipRole: "owner"` but no admin roleId** — `server/src/services/company-portability.ts:864`. Combined with bug #2 — the imported company creator has `membershipRole: "owner"` but `roleId: null`. Fix: alongside bug #2 fix, assign admin roleId to the creator.
+
+---
+
 ## Commits
 
 1. `e134d2c` — Phase 1-3: schema, migration, service
