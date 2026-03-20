@@ -11,7 +11,9 @@ import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useMyPermissions } from "../hooks/useMyPermissions";
 import { Button } from "@/components/ui/button";
-import { Settings, Check, User, Bot, ChevronDown, X, Plus } from "lucide-react";
+import { PERMISSION_KEYS } from "@paperclipai/shared";
+import { Settings, Check, User, Bot, ChevronDown, X, Plus, Shield, Pencil, Trash2 } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import {
   Field,
@@ -466,6 +468,11 @@ export function CompanySettings() {
           )}
         </div>
       </div>
+
+      {/* Roles Management */}
+      {hasPermission("users:manage_permissions") && selectedCompanyId && (
+        <RolesSection companyId={selectedCompanyId} />
+      )}
 
       {/* Hierarchy */}
       {selectedCompanyId && <HierarchySection companyId={selectedCompanyId} />}
@@ -1023,4 +1030,378 @@ function buildResolutionTestUrl(input: AgentSnippetInput): string | null {
   } catch {
     return null;
   }
+}
+
+// ── Permission labels for the role editor ────────────────────────────────────
+
+const PERMISSION_GROUPS: Array<{ label: string; keys: string[] }> = [
+  { label: "Company", keys: ["company:update", "company:archive", "company:delete", "company:transfer", "settings:view"] },
+  { label: "Agents", keys: ["agents:create", "agents:manage"] },
+  { label: "Projects", keys: ["projects:create", "projects:update", "projects:delete"] },
+  { label: "Issues & Tasks", keys: ["issues:create", "tasks:assign", "tasks:assign_scope"] },
+  { label: "Goals", keys: ["goals:create", "goals:update", "goals:delete"] },
+  { label: "Team", keys: ["users:invite", "users:manage_permissions", "joins:approve", "team:view"] },
+  { label: "Approvals", keys: ["approvals:decide"] },
+  { label: "View Access", keys: ["dashboard:view_full", "costs:view", "activity:view"] },
+];
+
+const PERMISSION_LABELS: Record<string, string> = {
+  "agents:create": "Create agents",
+  "agents:manage": "Edit/delete/pause agents",
+  "users:invite": "Invite members",
+  "users:manage_permissions": "Manage roles & permissions",
+  "tasks:assign": "Assign tasks",
+  "tasks:assign_scope": "Scoped task assignment",
+  "joins:approve": "Approve join requests",
+  "company:update": "Edit company settings",
+  "company:archive": "Archive company",
+  "company:delete": "Delete company",
+  "company:transfer": "Transfer ownership",
+  "projects:create": "Create projects",
+  "projects:update": "Edit projects",
+  "projects:delete": "Delete/archive projects",
+  "goals:create": "Create goals",
+  "goals:update": "Edit goals",
+  "goals:delete": "Delete goals",
+  "approvals:decide": "Approve/reject approvals",
+  "issues:create": "Create issues",
+  "costs:view": "View costs & budgets",
+  "activity:view": "View activity log",
+  "team:view": "View team members",
+  "dashboard:view_full": "Full dashboard access",
+  "settings:view": "Access settings page",
+};
+
+// ── Roles Management Section ─────────────────────────────────────────────────
+
+type RoleWithPerms = {
+  id: string;
+  companyId: string;
+  slug: string;
+  displayName: string;
+  isSystem: boolean;
+  permissions: string[];
+};
+
+function RolesSection({ companyId }: { companyId: string }) {
+  const queryClient = useQueryClient();
+  const [editingRole, setEditingRole] = useState<RoleWithPerms | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const { data: roles } = useQuery({
+    queryKey: queryKeys.access.roles(companyId),
+    queryFn: () => accessApi.listRoles(companyId),
+    enabled: !!companyId,
+  });
+
+  const { data: allMembers } = useQuery({
+    queryKey: queryKeys.access.members(companyId),
+    queryFn: () => accessApi.listCompanyMembers(companyId),
+    enabled: !!companyId,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (roleId: string) =>
+      fetch(`/api/companies/${companyId}/roles/${roleId}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      }).then((r) => { if (!r.ok) throw new Error("Failed to delete"); return r.json(); }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.roles(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.members(companyId) });
+    },
+  });
+
+  const assignRoleMutation = useMutation({
+    mutationFn: ({ memberId, roleId }: { memberId: string; roleId: string }) =>
+      accessApi.updateMemberRole(companyId, memberId, roleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.members(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.myPermissions(companyId) });
+    },
+  });
+
+  const humanMembers = (allMembers ?? []).filter(
+    (m: CompanyMember) => m.principalType === "user" && m.status === "active",
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Roles & Permissions
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setCreating(true)}>
+          <Plus className="h-3 w-3" /> New Role
+        </Button>
+      </div>
+
+      {/* Roles list */}
+      <div className="space-y-2">
+        {(roles ?? []).map((role) => {
+          const memberCount = humanMembers.filter((m) => m.membershipRole === role.slug).length;
+          return (
+            <div key={role.id} className="rounded-md border border-border p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">{role.displayName}</span>
+                  {role.isSystem && (
+                    <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">system</span>
+                  )}
+                  <span className="text-[11px] text-muted-foreground">
+                    {memberCount} member{memberCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {role.slug !== "admin" && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      onClick={() => setEditingRole(role as RoleWithPerms)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  )}
+                  {!role.isSystem && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6 text-destructive hover:text-destructive"
+                      onClick={() => {
+                        if (confirm(`Delete role "${role.displayName}"? Members will be reassigned to Employee.`)) {
+                          deleteMutation.mutate(role.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="mt-1.5 text-[11px] text-muted-foreground">
+                {role.permissions.length} permission{role.permissions.length !== 1 ? "s" : ""}
+                {role.slug === "admin" && " (all)"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Assign roles to members */}
+      {humanMembers.length > 0 && roles && roles.length > 0 && (
+        <div>
+          <p className="text-[11px] font-medium text-muted-foreground mb-2">Member Roles</p>
+          <div className="space-y-1.5">
+            {humanMembers.map((member) => (
+              <div key={member.id} className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted/30">
+                <span className="text-sm">{member.userName ?? member.userEmail ?? "Unknown"}</span>
+                <select
+                  className="text-xs bg-transparent border border-border rounded px-2 py-1 outline-none"
+                  value={roles.find((r) => r.slug === member.membershipRole)?.id ?? ""}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      assignRoleMutation.mutate({ memberId: member.id, roleId: e.target.value });
+                    }
+                  }}
+                  disabled={assignRoleMutation.isPending}
+                >
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>{role.displayName}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Edit role dialog */}
+      {editingRole && (
+        <RoleEditorDialog
+          companyId={companyId}
+          role={editingRole}
+          onClose={() => setEditingRole(null)}
+          onSaved={() => {
+            setEditingRole(null);
+            queryClient.invalidateQueries({ queryKey: queryKeys.access.roles(companyId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.access.myPermissions(companyId) });
+          }}
+        />
+      )}
+
+      {/* Create role dialog */}
+      {creating && (
+        <RoleEditorDialog
+          companyId={companyId}
+          role={null}
+          onClose={() => setCreating(false)}
+          onSaved={() => {
+            setCreating(false);
+            queryClient.invalidateQueries({ queryKey: queryKeys.access.roles(companyId) });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function RoleEditorDialog({
+  companyId,
+  role,
+  onClose,
+  onSaved,
+}: {
+  companyId: string;
+  role: RoleWithPerms | null; // null = creating new
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isNew = !role;
+  const [name, setName] = useState(role?.displayName ?? "");
+  const [slug, setSlug] = useState(role?.slug ?? "");
+  const [selectedPerms, setSelectedPerms] = useState<Set<string>>(
+    new Set(role?.permissions ?? []),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function togglePerm(key: string) {
+    setSelectedPerms((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  function toggleGroup(keys: string[]) {
+    setSelectedPerms((prev) => {
+      const next = new Set(prev);
+      const allSelected = keys.every((k) => next.has(k));
+      for (const k of keys) {
+        allSelected ? next.delete(k) : next.add(k);
+      }
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const permissionKeys = Array.from(selectedPerms);
+      if (isNew) {
+        const derivedSlug = slug.trim() || name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+        const res = await fetch(`/api/companies/${companyId}/roles`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug: derivedSlug, displayName: name.trim(), permissionKeys }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? "Failed to create role");
+        }
+      } else {
+        const res = await fetch(`/api/companies/${companyId}/roles/${role!.id}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ displayName: name.trim(), permissionKeys }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? "Failed to update role");
+        }
+      }
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
+        <h2 className="text-base font-semibold mb-4">
+          {isNew ? "Create Role" : `Edit: ${role!.displayName}`}
+        </h2>
+
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Role Name</label>
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Project Lead"
+            />
+          </div>
+
+          {isNew && (
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Slug (auto-derived if empty)</label>
+              <input
+                className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring"
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                placeholder="project_lead"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-2 block">Permissions</label>
+            <div className="space-y-3">
+              {PERMISSION_GROUPS.map((group) => {
+                const allSelected = group.keys.every((k) => selectedPerms.has(k));
+                const someSelected = group.keys.some((k) => selectedPerms.has(k));
+                return (
+                  <div key={group.label}>
+                    <label className="flex items-center gap-2 cursor-pointer select-none mb-1">
+                      <input
+                        type="checkbox"
+                        className="accent-primary"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                        onChange={() => toggleGroup(group.keys)}
+                      />
+                      <span className="text-xs font-semibold text-foreground">{group.label}</span>
+                    </label>
+                    <div className="ml-5 space-y-0.5">
+                      {group.keys.map((key) => (
+                        <label key={key} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
+                          <input
+                            type="checkbox"
+                            className="accent-primary"
+                            checked={selectedPerms.has(key)}
+                            onChange={() => togglePerm(key)}
+                          />
+                          <span className="text-xs text-muted-foreground">{PERMISSION_LABELS[key] ?? key}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-destructive">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving || !name.trim()}>
+              {saving ? "Saving…" : isNew ? "Create Role" : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
