@@ -316,6 +316,7 @@ export const PERMISSION_KEYS = [
   "users:invite",
   "users:manage_permissions",
   "tasks:assign",
+  "tasks:assign_peers",
   "tasks:assign_scope",
   "joins:approve",
   "company:update",

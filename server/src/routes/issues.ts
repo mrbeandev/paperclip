@@ -103,6 +103,19 @@ export function issueRoutes(db: Db, storage: StorageService) {
         if (assigneeAgentId && visibleIds.includes(assigneeAgentId)) return;
         const assigneeUserId = req.body?.assigneeUserId;
         if (assigneeUserId === req.actor.userId) return;
+
+        // Check peer assignment permission — can assign to siblings (same parent) but not their subordinates
+        const canAssignPeers = await access.hasRolePermission(companyId, "user", req.actor.userId, "tasks:assign_peers");
+        if (canAssignPeers) {
+          if (assigneeAgentId) {
+            const peerAgents = await access.getPeerAgentIds(companyId, req.actor.userId);
+            if (peerAgents.includes(assigneeAgentId)) return;
+          }
+          if (assigneeUserId) {
+            const peerUsers = await access.getPeerUserIds(companyId, req.actor.userId);
+            if (peerUsers.includes(assigneeUserId)) return;
+          }
+        }
       }
       throw forbidden("Missing permission: tasks:assign");
       return;

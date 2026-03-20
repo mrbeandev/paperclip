@@ -40,7 +40,7 @@ INSERT INTO "company_role_permissions" ("role_id", "permission_key")
 SELECT r.id, k.key FROM company_roles r
 CROSS JOIN (VALUES
   ('agents:create'), ('agents:manage'), ('users:invite'), ('users:manage_permissions'),
-  ('tasks:assign'), ('tasks:assign_scope'), ('joins:approve'),
+  ('tasks:assign'), ('tasks:assign_peers'), ('tasks:assign_scope'), ('joins:approve'),
   ('company:update'), ('company:archive'), ('company:delete'), ('company:transfer'),
   ('projects:create'), ('projects:update'), ('projects:delete'),
   ('goals:create'), ('goals:update'), ('goals:delete'),
@@ -55,7 +55,7 @@ INSERT INTO "company_role_permissions" ("role_id", "permission_key")
 SELECT r.id, k.key FROM company_roles r
 CROSS JOIN (VALUES
   ('agents:create'), ('agents:manage'), ('users:invite'),
-  ('tasks:assign'), ('tasks:assign_scope'), ('joins:approve'),
+  ('tasks:assign'), ('tasks:assign_peers'), ('tasks:assign_scope'), ('joins:approve'),
   ('company:update'),
   ('projects:create'), ('projects:update'), ('projects:delete'),
   ('goals:create'), ('goals:update'), ('goals:delete'),

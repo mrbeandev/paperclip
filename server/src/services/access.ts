@@ -339,6 +339,81 @@ export function accessService(db: Db) {
     return subordinates.agentIds;
   }
 
+  /**
+   * Returns agent IDs that are peers of the user (share the same parent).
+   * Does NOT include subordinates of those peers — only the direct siblings.
+   */
+  async function getPeerAgentIds(
+    companyId: string,
+    userId: string,
+  ): Promise<string[]> {
+    const membership = await getMembership(companyId, "user", userId);
+    if (!membership) return [];
+
+    const allAgents = await db
+      .select({ id: agents.id, reportsTo: agents.reportsTo, reportsToUserId: agents.reportsToUserId })
+      .from(agents)
+      .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+
+    const allMembers = await listMembers(companyId);
+    const peerAgentIds: string[] = [];
+
+    // If user reports to another user, find agents that also report to that user
+    if (membership.reportsToUserId) {
+      for (const agent of allAgents) {
+        if (agent.reportsToUserId === membership.reportsToUserId) {
+          peerAgentIds.push(agent.id);
+        }
+      }
+    }
+
+    // If user reports to an agent, find agents that also report to that agent
+    if (membership.reportsToAgentId) {
+      for (const agent of allAgents) {
+        if (agent.reportsTo === membership.reportsToAgentId && agent.id !== membership.reportsToAgentId) {
+          peerAgentIds.push(agent.id);
+        }
+      }
+    }
+
+    // Also find peer humans (same parent) — they're peers, not their subordinate agents
+    // For peer humans, we just add their userId, not their subordinate agents
+
+    return peerAgentIds;
+  }
+
+  /**
+   * Returns user IDs that are peers of the user (share the same parent).
+   */
+  async function getPeerUserIds(
+    companyId: string,
+    userId: string,
+  ): Promise<string[]> {
+    const membership = await getMembership(companyId, "user", userId);
+    if (!membership) return [];
+
+    const allMembers = await listMembers(companyId);
+    const peerUserIds: string[] = [];
+
+    if (membership.reportsToUserId) {
+      for (const m of allMembers) {
+        if (m.principalType === "user" && m.reportsToUserId === membership.reportsToUserId && m.principalId !== userId) {
+          peerUserIds.push(m.principalId);
+        }
+      }
+    }
+
+    if (membership.reportsToAgentId) {
+      for (const m of allMembers) {
+        if (m.principalType === "user" && m.reportsToAgentId === membership.reportsToAgentId && m.principalId !== userId) {
+          peerUserIds.push(m.principalId);
+        }
+      }
+    }
+
+    return peerUserIds;
+  }
+
   async function updateMemberHierarchy(
     memberId: string,
     reportsToUserId: string | null,
@@ -495,6 +570,8 @@ export function accessService(db: Db) {
     setMemberPermissions,
     getSubordinates,
     getVisibleAgentIds,
+    getPeerAgentIds,
+    getPeerUserIds,
     updateMemberHierarchy,
     seedDefaultRoles,
     listRoles,
