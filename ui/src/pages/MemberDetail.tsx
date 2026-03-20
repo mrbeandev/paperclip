@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useParams, Link, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { accessApi, type CompanyMember } from "../api/access";
-import { authApi } from "../api/auth";
 import { agentsApi } from "../api/agents";
 import { activityApi } from "../api/activity";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { agentUrl } from "../lib/utils";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -22,12 +22,6 @@ export function MemberDetail() {
   const { userId, companyPrefix } = useParams<{ userId: string; companyPrefix: string }>();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
 
   const { data: allMembers, isLoading: membersLoading } = useQuery({
     queryKey: queryKeys.access.members(selectedCompanyId!),
@@ -86,18 +80,14 @@ export function MemberDetail() {
       .slice(0, 20);
   }, [activity, userId]);
 
-  const isOwner = useMemo(() => {
-    if (!session?.user || !allMembers) return false;
-    const me = allMembers.find((m) => m.principalType === "user" && m.principalId === session.user.id);
-    return me?.membershipRole === "owner";
-  }, [session, allMembers]);
+  const { hasPermission } = useMyPermissions();
 
   useEffect(() => {
     setBreadcrumbs([
-      ...(isOwner ? [{ label: "Team Members", href: `/${companyPrefix}/company/team-members` }] : []),
+      ...(hasPermission("team:view") ? [{ label: "Team Members", href: `/${companyPrefix}/company/team-members` }] : []),
       { label: member?.userName ?? member?.userEmail ?? "Member" },
     ]);
-  }, [setBreadcrumbs, companyPrefix, member, isOwner]);
+  }, [setBreadcrumbs, companyPrefix, member, hasPermission]);
 
   if (membersLoading) return <PageSkeleton />;
 

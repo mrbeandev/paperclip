@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Paperclip, Plus } from "lucide-react";
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { authApi } from "../api/auth";
-import { accessApi } from "../api/access";
+import { useQueries } from "@tanstack/react-query";
 import { queryKeys } from "../lib/queryKeys";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import {
   DndContext,
   closestCenter,
@@ -168,23 +167,7 @@ export function CompanyRail() {
   );
   const companyIds = useMemo(() => sidebarCompanies.map((company) => company.id), [sidebarCompanies]);
 
-  const { data: railSession } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-  const { data: railMembers } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-  const isRailOwner = useMemo(() => {
-    if (!railSession?.user || !railMembers) return false;
-    const me = railMembers.find(
-      (m) => m.principalType === "user" && m.principalId === railSession.user.id,
-    );
-    return me?.membershipRole === "owner";
-  }, [railSession, railMembers]);
+  const { hasPermission } = useMyPermissions();
 
   const liveRunsQueries = useQueries({
     queries: companyIds.map((companyId) => ({
@@ -323,7 +306,7 @@ export function CompanyRail() {
         </DndContext>
       </div>
 
-      {isRailOwner && <>
+      {hasPermission("settings:view") && <>
       {/* Separator before add button */}
       <div className="w-8 h-px bg-border mx-auto shrink-0" />
 

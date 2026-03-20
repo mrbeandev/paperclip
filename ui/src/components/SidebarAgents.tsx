@@ -39,7 +39,7 @@ function sortByHierarchy(agents: Agent[]): Agent[] {
   return sorted;
 }
 
-export function SidebarAgents({ isOwner = false }: { isOwner?: boolean }) {
+export function SidebarAgents() {
   const [open, setOpen] = useState(true);
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();

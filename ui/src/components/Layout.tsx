@@ -23,8 +23,7 @@ import { useTheme } from "../context/ThemeContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { healthApi } from "../api/health";
-import { authApi } from "../api/auth";
-import { accessApi } from "../api/access";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { shouldSyncCompanySelectionFromRoute } from "../lib/company-selection";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
@@ -76,23 +75,7 @@ export function Layout() {
   } = useCompany();
   const { theme, toggleTheme } = useTheme();
 
-  const { data: layoutSession } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-  const { data: layoutMembers } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-  const isLayoutOwner = useMemo(() => {
-    if (!layoutSession?.user || !layoutMembers) return false;
-    const me = layoutMembers.find(
-      (m) => m.principalType === "user" && m.principalId === layoutSession.user.id,
-    );
-    return me?.membershipRole === "owner";
-  }, [layoutSession, layoutMembers]);
+  const { hasPermission } = useMyPermissions();
   const { companyPrefix } = useParams<{ companyPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -333,7 +316,7 @@ export function Layout() {
                   <BookOpen className="h-4 w-4 shrink-0" />
                   <span className="truncate">Documentation</span>
                 </a>
-                {isLayoutOwner && <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
+                {hasPermission("settings:view") && <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
                   <Link
                     to={instanceSettingsTarget}
                     aria-label="Instance settings"
@@ -383,7 +366,7 @@ export function Layout() {
                   <BookOpen className="h-4 w-4 shrink-0" />
                   <span className="truncate">Documentation</span>
                 </a>
-                {isLayoutOwner && <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
+                {hasPermission("settings:view") && <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
                   <Link
                     to={instanceSettingsTarget}
                     aria-label="Instance settings"

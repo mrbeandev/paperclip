@@ -26,6 +26,7 @@ import { authApi } from "../api/auth";
 import { accessApi } from "../api/access";
 import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { useNavigate } from "@/lib/router";
@@ -71,25 +72,25 @@ export function Sidebar() {
     ) ?? null;
   }, [currentUser, members]);
 
-  const isOwner = myMembership?.membershipRole === "owner";
+  const { hasPermission } = useMyPermissions();
 
   const { data: subordinates } = useQuery({
     queryKey: queryKeys.access.mySubordinates(selectedCompanyId!),
     queryFn: () => accessApi.getMySubordinates(selectedCompanyId!),
-    enabled: !!selectedCompanyId && !isOwner,
+    enabled: !!selectedCompanyId && !hasPermission("dashboard:view_full"),
   });
 
-  // Scope live run count: owners see all, members only their subordinate agents
+  // Scope live run count
   const liveRunCount = useMemo(() => {
     const all = liveRuns ?? [];
-    if (isOwner || !subordinates || subordinates.isTopLevel) return all.length;
+    if (hasPermission("dashboard:view_full") || !subordinates || subordinates.isTopLevel) return all.length;
     const allowed = new Set(subordinates.agentIds);
     return all.filter((r) => allowed.has(r.agentId)).length;
-  }, [liveRuns, isOwner, subordinates]);
+  }, [liveRuns, hasPermission, subordinates]);
 
   // Check if member has any hierarchy assignment (reports to someone or has reports)
   const hasHierarchyAssignment = useMemo(() => {
-    if (isOwner || !currentUser || !members) return true;
+    if (hasPermission("dashboard:view_full") || !currentUser || !members) return true;
     const me = myMembership;
     if (!me) return false;
     // Has a parent
@@ -98,7 +99,7 @@ export function Sidebar() {
     return members.some(
       (m) => m.reportsToUserId === currentUser.id,
     );
-  }, [isOwner, currentUser, members, myMembership]);
+  }, [hasPermission, currentUser, members, myMembership]);
 
   function openSearch() {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
@@ -143,7 +144,7 @@ export function Sidebar() {
             <span className="truncate">New Issue</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
-          {isOwner && <SidebarNavItem to="/overall-dashboard" label="Overview" icon={BarChart3} />}
+          {hasPermission("dashboard:view_full") && <SidebarNavItem to="/overall-dashboard" label="Overview" icon={BarChart3} />}
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
@@ -163,19 +164,19 @@ export function Sidebar() {
 
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
-          {isOwner && <SidebarNavItem to="/goals" label="Goals" icon={Target} />}
+          {hasPermission("goals:create") && <SidebarNavItem to="/goals" label="Goals" icon={Target} />}
         </SidebarSection>
 
         <SidebarProjects />
 
-        <SidebarAgents isOwner={isOwner} />
+        <SidebarAgents />
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />
-          {isOwner && <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />}
-          {isOwner && <SidebarNavItem to="/activity" label="Activity" icon={History} />}
-          {isOwner && <SidebarNavItem to="/company/team-members" label="Team Members" icon={Users} />}
-          {isOwner && <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />}
+          {hasPermission("costs:view") && <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />}
+          {hasPermission("activity:view") && <SidebarNavItem to="/activity" label="Activity" icon={History} />}
+          {hasPermission("team:view") && <SidebarNavItem to="/company/team-members" label="Team Members" icon={Users} />}
+          {hasPermission("settings:view") && <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />}
         </SidebarSection>
 
         <PluginSlotOutlet

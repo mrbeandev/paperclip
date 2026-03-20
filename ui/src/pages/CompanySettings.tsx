@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -9,6 +9,7 @@ import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { Button } from "@/components/ui/button";
 import { Settings, Check, User, Bot, ChevronDown, X, Plus } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
@@ -34,25 +35,7 @@ export function CompanySettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
 
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-
-  const { data: settingsMembers } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
-  const isCompanyOwner = useMemo(() => {
-    if (!session?.user || !settingsMembers) return false;
-    const me = settingsMembers.find(
-      (m: CompanyMember) => m.principalType === "user" && m.principalId === session.user.id,
-    );
-    return me?.membershipRole === "owner";
-  }, [session, settingsMembers]);
+  const { hasPermission } = useMyPermissions();
 
   // General settings local state
   const [companyName, setCompanyName] = useState("");
@@ -488,7 +471,7 @@ export function CompanySettings() {
       {selectedCompanyId && <HierarchySection companyId={selectedCompanyId} />}
 
       {/* Danger Zone — owner only */}
-      {isCompanyOwner && <div className="space-y-4">
+      {hasPermission("company:archive") && <div className="space-y-4">
         <div className="text-xs font-medium text-destructive uppercase tracking-wide">
           Danger Zone
         </div>
@@ -580,18 +563,14 @@ function HierarchySection({ companyId }: { companyId: string }) {
   const projectAssignments: Record<string, string[]> = companyMeta.projectAssignments ?? {};
 
   const currentUserId = session?.user?.id ?? null;
-  const isOwner = (members ?? []).some(
-    (m: CompanyMember) =>
-      m.principalType === "user" &&
-      m.principalId === currentUserId &&
-      m.membershipRole === "owner",
-  );
+  const { hasPermission: hasHierarchyPermission } = useMyPermissions();
+  const isFullAccess = hasHierarchyPermission("dashboard:view_full");
 
   // For subordinate scoping: members only see themselves + their direct/indirect reports
   const { data: subordinates } = useQuery({
     queryKey: queryKeys.access.mySubordinates(companyId),
     queryFn: () => accessApi.getMySubordinates(companyId),
-    enabled: !!companyId && !isOwner,
+    enabled: !!companyId && !isFullAccess,
   });
 
   const allHumans = (members ?? []).filter(
@@ -600,7 +579,7 @@ function HierarchySection({ companyId }: { companyId: string }) {
   const allActiveAgents = (agents ?? []).filter((a) => a.status !== "terminated");
 
   // Owners see everything; members see only themselves + subordinates
-  const humanMembers = isOwner
+  const humanMembers = isFullAccess
     ? allHumans
     : allHumans.filter((m: CompanyMember) => {
         if (m.principalId === currentUserId) return true; // always see yourself
@@ -609,7 +588,7 @@ function HierarchySection({ companyId }: { companyId: string }) {
         return subordinates?.userIds.includes(m.principalId) ?? false;
       });
 
-  const activeAgents = isOwner
+  const activeAgents = isFullAccess
     ? allActiveAgents
     : allActiveAgents.filter((a) => {
         if (subordinates?.isTopLevel) return true;

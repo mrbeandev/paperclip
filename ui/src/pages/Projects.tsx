@@ -1,12 +1,11 @@
 import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { projectsApi } from "../api/projects";
-import { accessApi } from "../api/access";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { EntityRow } from "../components/EntityRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState } from "../components/EmptyState";
@@ -20,29 +19,11 @@ export function Projects() {
   const { openNewProject } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
 
+  const { hasPermission } = useMyPermissions();
+
   useEffect(() => {
     setBreadcrumbs([{ label: "Projects" }]);
   }, [setBreadcrumbs]);
-
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
-  const isOwner = useMemo(() => {
-    if (!session?.user || !members) return false;
-    const me = members.find(
-      (m) => m.principalType === "user" && m.principalId === session.user.id,
-    );
-    return me?.membershipRole === "owner";
-  }, [session, members]);
 
   const { data: allProjects, isLoading, error } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -64,7 +45,7 @@ export function Projects() {
 
   return (
     <div className="space-y-4">
-      {isOwner && (
+      {hasPermission("projects:create") && (
         <div className="flex items-center justify-end">
           <Button size="sm" variant="outline" onClick={openNewProject}>
             <Plus className="h-4 w-4 mr-1" />
@@ -78,9 +59,9 @@ export function Projects() {
       {!isLoading && projects.length === 0 && (
         <EmptyState
           icon={Hexagon}
-          message={isOwner ? "No projects yet." : "No projects assigned to you."}
-          action={isOwner ? "Add Project" : undefined}
-          onAction={isOwner ? openNewProject : undefined}
+          message={hasPermission("projects:create") ? "No projects yet." : "No projects assigned to you."}
+          action={hasPermission("projects:create") ? "Add Project" : undefined}
+          onAction={hasPermission("projects:create") ? openNewProject : undefined}
         />
       )}
 

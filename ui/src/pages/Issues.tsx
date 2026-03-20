@@ -4,13 +4,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
-import { accessApi } from "../api/access";
-import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { CircleDot } from "lucide-react";
@@ -95,17 +94,7 @@ export function Issues() {
     },
   });
 
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
+  const { hasPermission } = useMyPermissions();
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -114,15 +103,10 @@ export function Issues() {
   });
 
   const canCreateIssue = useMemo(() => {
-    if (!session?.user || !members) return true; // default allow while loading
-    const me = members.find(
-      (m) => m.principalType === "user" && m.principalId === session.user.id,
-    );
-    if (!me) return true;
-    if (me.membershipRole === "owner") return true;
+    if (hasPermission("issues:create")) return true;
     // Non-owner members can create issues only if they have project assignments
     return (projects ?? []).length > 0;
-  }, [session, members, projects]);
+  }, [hasPermission, projects]);
 
   if (!selectedCompanyId) {
     return <EmptyState icon={CircleDot} message="Select a company to view issues." />;

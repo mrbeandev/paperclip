@@ -16,11 +16,11 @@ import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { authApi } from "../api/auth";
-import { accessApi } from "../api/access";
 import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import {
   Collapsible,
@@ -122,6 +122,7 @@ export function SidebarProjects() {
   const { openNewProject } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
   const location = useLocation();
+  const { hasPermission } = useMyPermissions();
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -140,20 +141,6 @@ export function SidebarProjects() {
   });
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
-  const isOwner = useMemo(() => {
-    if (!currentUserId || !members) return false;
-    const me = members.find(
-      (m) => m.principalType === "user" && m.principalId === currentUserId,
-    );
-    return me?.membershipRole === "owner";
-  }, [currentUserId, members]);
 
   const visibleProjects = useMemo(
     () => (projects ?? []).filter((project: Project) => !project.archivedAt),
@@ -203,7 +190,7 @@ export function SidebarProjects() {
               Projects
             </span>
           </CollapsibleTrigger>
-          {isOwner && (
+          {hasPermission("projects:create") && (
             <button
               onClick={(e) => {
                 e.stopPropagation();

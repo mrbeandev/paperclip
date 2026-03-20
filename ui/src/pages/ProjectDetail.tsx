@@ -7,7 +7,6 @@ import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { accessApi } from "../api/access";
-import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
@@ -22,6 +21,7 @@ import { IssuesList } from "../components/IssuesList";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { projectRouteRef, cn } from "../lib/utils";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
@@ -459,25 +459,7 @@ export function ProjectDetail() {
     },
   });
 
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-
-  const { data: companyMembers } = useQuery({
-    queryKey: queryKeys.access.members(resolvedCompanyId!),
-    queryFn: () => accessApi.listCompanyMembers(resolvedCompanyId!),
-    enabled: !!resolvedCompanyId,
-  });
-
-  const isProjectOwner = useMemo(() => {
-    if (!session?.user || !companyMembers) return false;
-    const me = companyMembers.find(
-      (m) => m.principalType === "user" && m.principalId === session.user.id,
-    );
-    return me?.membershipRole === "owner";
-  }, [session, companyMembers]);
+  const { hasPermission } = useMyPermissions();
 
   const { data: budgetOverview } = useQuery({
     queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
@@ -746,7 +728,7 @@ export function ProjectDetail() {
             onUpdate={(data) => updateProject.mutate(data)}
             onFieldUpdate={updateProjectField}
             getFieldSaveState={(field) => fieldSaveStates[field] ?? "idle"}
-            onArchive={isProjectOwner ? (archived) => archiveProject.mutate(archived) : undefined}
+            onArchive={hasPermission("projects:delete") ? (archived) => archiveProject.mutate(archived) : undefined}
             archivePending={archiveProject.isPending}
           />
         </div>

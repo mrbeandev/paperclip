@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,7 @@ import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
+import { useMyPermissions } from "./hooks/useMyPermissions";
 import { useDialog } from "./context/DialogContext";
 import { loadLastInboxTab } from "./lib/inbox";
 
@@ -348,25 +349,10 @@ function InstanceAdminOnly({ children }: { children: React.ReactNode }) {
 }
 
 function OwnerOnly({ children }: { children: React.ReactNode }) {
-  const { selectedCompanyId } = useCompany();
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    retry: false,
-  });
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.members(selectedCompanyId ?? "__none__"),
-    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-  const isOwner = useMemo(() => {
-    if (!session?.user || !members) return null; // loading
-    const me = members.find((m) => m.principalType === "user" && m.principalId === session.user.id);
-    return me?.membershipRole === "owner";
-  }, [session, members]);
+  const { hasPermission, isLoading } = useMyPermissions();
 
-  if (isOwner === null) return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
-  if (!isOwner) return <Navigate to="dashboard" replace />;
+  if (isLoading) return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  if (!hasPermission("settings:view")) return <Navigate to="dashboard" replace />;
   return <>{children}</>;
 }
 
