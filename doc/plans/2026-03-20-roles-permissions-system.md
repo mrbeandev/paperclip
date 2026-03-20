@@ -394,6 +394,26 @@ After implementation, verify:
 
 11. **Role editor has grouped permissions with indeterminate checkbox** — The plan mentioned a "checkbox grid". Implementation uses collapsible permission groups (Company, Agents, Projects, etc.) with group-level toggle that shows indeterminate state when partially selected.
 
+12. **`tasks:assign_peers` permission added post-plan** — New permission key not in original plan. Allows assigning tasks to siblings (agents/users sharing the same parent) but NOT to subordinates of those peers. Implementation:
+    - `getPeerAgentIds()` and `getPeerUserIds()` in access service
+    - `getVisibleAgentIds()` includes peers when user has the permission (affects all UI dropdowns)
+    - `GET /my-subordinates` returns peers when user has the permission
+    - `assertCanAssignTasks` checks peers after subordinate check fails
+    - Admin + Manager roles get it by default; Employee does not
+
+13. **Admin role dropdown locked** — Not in original plan. Admin members show static "Admin (use Transfer Ownership to change)" text instead of the role dropdown. Server also blocks `PATCH /members/:id/role` for admin members.
+
+14. **Transfer ownership also transfers instance_admin + reassigns agents/members** — Not in original plan. The transfer now:
+    - Promotes target to instance_admin, demotes current
+    - Reassigns all agents with `reportsToUserId = oldAdmin` to new admin
+    - Reassigns all members with `reportsToUserId = oldAdmin` to new admin
+
+15. **Project auto-assignment on creation** — Not in original plan. When a non-full-access user creates a project, the server auto-adds them to `projectAssignments` in company metadata so they can see their own project.
+
+16. **"No agents" dashboard alert gated by `agents:create` permission** — Employees who can't create agents no longer see the misleading "Create one here" prompt.
+
+17. **`archivedAt` string-to-Date parsing** — Bug fix: PATCH /projects/:id received `archivedAt` as ISO string but Drizzle expected Date object.
+
 ---
 
 ## Commits
@@ -403,3 +423,10 @@ After implementation, verify:
 3. `f9b9170` — Phase 5C: replace all isOwner with hasPermission (13 files, -169 lines)
 4. `72002e6` — Phase 6: bootstrap, owner→admin, remaining membershipRole fixes
 5. `0ae1b50` — Phase 5D: Role Management UI
+6. `779455e` — fix: no-agents alert + project auto-assignment
+7. `932558a` — fix: archivedAt string-to-Date parsing
+8. `0caa718` — fix: transfer ownership transfers instance_admin role
+9. `329bdc1` — fix: transfer ownership reassigns agents/members
+10. `5ceb422` — fix: admin role dropdown locked
+11. `80cb4e6` — feat: tasks:assign_peers permission
+12. `4f8434d` — fix: tasks:assign_peers affects all UI dropdowns
