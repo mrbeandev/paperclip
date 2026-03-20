@@ -2,11 +2,15 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  companies,
   companyMemberships,
+  companyRoles,
+  companyRolePermissions,
   instanceUserRoles,
   principalPermissionGrants,
 } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { ADMIN_PERMISSIONS, MANAGER_PERMISSIONS, EMPLOYEE_PERMISSIONS } from "@paperclipai/shared";
 
 type MembershipRow = typeof companyMemberships.$inferSelect;
 type GrantInput = {
@@ -73,7 +77,7 @@ export function accessService(db: Db) {
   ): Promise<boolean> {
     if (!userId) return false;
     if (await isInstanceAdmin(userId)) return true;
-    return hasPermission(companyId, "user", userId, permissionKey);
+    return hasRolePermission(companyId, "user", userId, permissionKey);
   }
 
   async function listMembers(companyId: string) {
@@ -327,8 +331,9 @@ export function accessService(db: Db) {
   ): Promise<string[] | null> {
     const membership = await getMembership(companyId, "user", userId);
     if (!membership) return null;
-    // Owners with no hierarchy see everything
-    if (membership.membershipRole === "owner" && !membership.reportsToUserId && !membership.reportsToAgentId) return null;
+    // Admins/managers (with dashboard:view_full) and no hierarchy see everything
+    const canViewAll = await hasRolePermission(companyId, "user", userId, "dashboard:view_full");
+    if (canViewAll && !membership.reportsToUserId && !membership.reportsToAgentId) return null;
     // Non-owner members with no hierarchy see nothing (empty array)
     const subordinates = await getSubordinates(companyId, userId);
     return subordinates.agentIds;
@@ -347,10 +352,143 @@ export function accessService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  /**
+   * Check if a principal has a permission via their role OR per-principal grants.
+   * Two-tier: role permissions first, then individual grants as overrides.
+   */
+  async function hasRolePermission(
+    companyId: string,
+    principalType: PrincipalType,
+    principalId: string,
+    permissionKey: PermissionKey,
+  ): Promise<boolean> {
+    const membership = await getMembership(companyId, principalType, principalId);
+    if (!membership || membership.status !== "active") return false;
+
+    // 1. Check role-based permissions
+    if (membership.roleId) {
+      const roleGrant = await db
+        .select({ id: companyRolePermissions.id })
+        .from(companyRolePermissions)
+        .where(
+          and(
+            eq(companyRolePermissions.roleId, membership.roleId),
+            eq(companyRolePermissions.permissionKey, permissionKey),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+      if (roleGrant) return true;
+    }
+
+    // 2. Fall back to per-principal grants
+    return hasPermission(companyId, principalType, principalId, permissionKey);
+  }
+
+  /**
+   * Returns all permission keys a user has in a company (from role + individual grants).
+   */
+  async function getMyPermissions(
+    companyId: string,
+    userId: string,
+  ): Promise<PermissionKey[]> {
+    const membership = await getMembership(companyId, "user", userId);
+    if (!membership || membership.status !== "active") return [];
+
+    const keys = new Set<string>();
+
+    // From role
+    if (membership.roleId) {
+      const rolePerms = await db
+        .select({ permissionKey: companyRolePermissions.permissionKey })
+        .from(companyRolePermissions)
+        .where(eq(companyRolePermissions.roleId, membership.roleId));
+      for (const rp of rolePerms) keys.add(rp.permissionKey);
+    }
+
+    // From individual grants
+    const grants = await db
+      .select({ permissionKey: principalPermissionGrants.permissionKey })
+      .from(principalPermissionGrants)
+      .where(
+        and(
+          eq(principalPermissionGrants.companyId, companyId),
+          eq(principalPermissionGrants.principalType, "user"),
+          eq(principalPermissionGrants.principalId, userId),
+        ),
+      );
+    for (const g of grants) keys.add(g.permissionKey);
+
+    return Array.from(keys) as PermissionKey[];
+  }
+
+  /**
+   * Seed default roles (admin, manager, employee) for a company.
+   * Called when creating a new company.
+   */
+  async function seedDefaultRoles(companyId: string) {
+    const roleDefs = [
+      { slug: "admin", displayName: "Admin", permissions: ADMIN_PERMISSIONS },
+      { slug: "manager", displayName: "Manager", permissions: MANAGER_PERMISSIONS },
+      { slug: "employee", displayName: "Employee", permissions: EMPLOYEE_PERMISSIONS },
+    ];
+
+    for (const def of roleDefs) {
+      const [role] = await db
+        .insert(companyRoles)
+        .values({
+          companyId,
+          slug: def.slug,
+          displayName: def.displayName,
+          isSystem: true,
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (role) {
+        const permValues = def.permissions.map((key) => ({
+          roleId: role.id,
+          permissionKey: key,
+        }));
+        if (permValues.length > 0) {
+          await db
+            .insert(companyRolePermissions)
+            .values(permValues)
+            .onConflictDoNothing();
+        }
+      }
+    }
+  }
+
+  async function listRoles(companyId: string) {
+    return db
+      .select()
+      .from(companyRoles)
+      .where(eq(companyRoles.companyId, companyId))
+      .orderBy(companyRoles.createdAt);
+  }
+
+  async function getRolePermissions(roleId: string) {
+    return db
+      .select({ permissionKey: companyRolePermissions.permissionKey })
+      .from(companyRolePermissions)
+      .where(eq(companyRolePermissions.roleId, roleId))
+      .then((rows) => rows.map((r) => r.permissionKey));
+  }
+
+  async function getRoleBySlug(companyId: string, slug: string) {
+    return db
+      .select()
+      .from(companyRoles)
+      .where(and(eq(companyRoles.companyId, companyId), eq(companyRoles.slug, slug)))
+      .then((rows) => rows[0] ?? null);
+  }
+
   return {
     isInstanceAdmin,
     canUser,
     hasPermission,
+    hasRolePermission,
+    getMyPermissions,
     getMembership,
     ensureMembership,
     listMembers,
@@ -358,6 +496,10 @@ export function accessService(db: Db) {
     getSubordinates,
     getVisibleAgentIds,
     updateMemberHierarchy,
+    seedDefaultRoles,
+    listRoles,
+    getRolePermissions,
+    getRoleBySlug,
     promoteInstanceAdmin,
     demoteInstanceAdmin,
     listUserCompanyAccess,

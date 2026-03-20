@@ -312,13 +312,45 @@ export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
 export const PERMISSION_KEYS = [
   "agents:create",
+  "agents:manage",
   "users:invite",
   "users:manage_permissions",
   "tasks:assign",
   "tasks:assign_scope",
   "joins:approve",
+  "company:update",
+  "company:archive",
+  "company:delete",
+  "company:transfer",
+  "projects:create",
+  "projects:update",
+  "projects:delete",
+  "goals:create",
+  "goals:update",
+  "goals:delete",
+  "approvals:decide",
+  "issues:create",
+  "costs:view",
+  "activity:view",
+  "team:view",
+  "dashboard:view_full",
+  "settings:view",
 ] as const;
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+
+export const MEMBERSHIP_ROLES = ["admin", "manager", "employee"] as const;
+export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number];
+
+export const ADMIN_PERMISSIONS: readonly PermissionKey[] = [...PERMISSION_KEYS];
+
+export const MANAGER_PERMISSIONS: readonly PermissionKey[] = PERMISSION_KEYS.filter(
+  (k) => !["company:delete", "company:transfer", "company:archive", "users:manage_permissions"].includes(k),
+);
+
+export const EMPLOYEE_PERMISSIONS: readonly PermissionKey[] = [
+  "tasks:assign",
+  "issues:create",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Plugin System — see doc/plugins/PLUGIN_SPEC.md for the full specification

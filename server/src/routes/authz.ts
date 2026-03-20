@@ -2,7 +2,9 @@ import type { Request } from "express";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companyMemberships } from "@paperclipai/db";
+import type { PermissionKey } from "@paperclipai/shared";
 import { forbidden, unauthorized } from "../errors.js";
+import { accessService } from "../services/access.js";
 
 let _db: Db | null = null;
 export function setAuthzDb(db: Db) { _db = db; }
@@ -30,6 +32,20 @@ export async function assertOwner(req: Request, companyId: string) {
   if (!membership || membership.membershipRole !== "owner") {
     throw forbidden("Owner access required");
   }
+}
+
+/**
+ * Asserts that the current board user has a specific permission in the company.
+ * Uses role-based + per-principal two-tier resolution.
+ */
+export async function assertPermission(req: Request, companyId: string, permissionKey: PermissionKey) {
+  assertBoard(req);
+  assertCompanyAccess(req, companyId);
+  if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return;
+  if (!_db || !req.actor.userId) throw forbidden(`Missing permission: ${permissionKey}`);
+  const access = accessService(_db);
+  const allowed = await access.hasRolePermission(companyId, "user", req.actor.userId, permissionKey);
+  if (!allowed) throw forbidden(`Missing permission: ${permissionKey}`);
 }
 
 export function assertBoard(req: Request) {

@@ -17,10 +17,28 @@ export interface CompanyMembership {
   principalId: string;
   status: MembershipStatus;
   membershipRole: string | null;
+  roleId: string | null;
   reportsToUserId: string | null;
   reportsToAgentId: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface CompanyRole {
+  id: string;
+  companyId: string;
+  slug: string;
+  displayName: string;
+  isSystem: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CompanyRolePermission {
+  id: string;
+  roleId: string;
+  permissionKey: string;
+  createdAt: Date;
 }
 
 export interface PrincipalPermissionGrant {
