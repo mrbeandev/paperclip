@@ -16,6 +16,7 @@ import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { authApi } from "../api/auth";
+import { accessApi } from "../api/access";
 import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
@@ -140,6 +141,20 @@ export function SidebarProjects() {
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const isOwner = useMemo(() => {
+    if (!currentUserId || !members) return false;
+    const me = members.find(
+      (m) => m.principalType === "user" && m.principalId === currentUserId,
+    );
+    return me?.membershipRole === "owner";
+  }, [currentUserId, members]);
+
   const visibleProjects = useMemo(
     () => (projects ?? []).filter((project: Project) => !project.archivedAt),
     [projects],
@@ -188,16 +203,18 @@ export function SidebarProjects() {
               Projects
             </span>
           </CollapsibleTrigger>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              openNewProject();
-            }}
-            className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label="New project"
-          >
-            <Plus className="h-3 w-3" />
-          </button>
+          {isOwner && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openNewProject();
+              }}
+              className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
+              aria-label="New project"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          )}
         </div>
       </div>
 

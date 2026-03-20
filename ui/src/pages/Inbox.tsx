@@ -411,6 +411,41 @@ export function Inbox() {
     },
   });
 
+  const approveAllMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await approvalsApi.approve(id);
+      }
+    },
+    onSuccess: () => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Failed to approve all");
+      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
+    },
+  });
+
+  const approveAllJoinMutation = useMutation({
+    mutationFn: async (requests: JoinRequest[]) => {
+      for (const jr of requests) {
+        await accessApi.approveJoinRequest(selectedCompanyId!, jr.id);
+      }
+    },
+    onSuccess: () => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Failed to approve all join requests");
+      queryClient.invalidateQueries({ queryKey: queryKeys.access.joinRequests(selectedCompanyId!) });
+    },
+  });
+
   const approveJoinMutation = useMutation({
     mutationFn: (joinRequest: JoinRequest) =>
       accessApi.approveJoinRequest(selectedCompanyId!, joinRequest.id),
@@ -524,7 +559,7 @@ export function Inbox() {
         ? unreadTouchedIssues.length > 0
         : hasTouchedIssues;
   const showJoinRequestsSection =
-    tab === "all" ? showJoinRequestsCategory && hasJoinRequests : tab === "unread" && hasJoinRequests;
+    tab === "all" ? showJoinRequestsCategory && hasJoinRequests : hasJoinRequests;
   const showApprovalsSection = tab === "all"
     ? showApprovalsCategory && filteredAllApprovals.length > 0
     : actionableApprovals.length > 0;
@@ -647,9 +682,22 @@ export function Inbox() {
         <>
           {showSeparatorBefore("approvals") && <Separator />}
           <div>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              {tab === "unread" ? "Approvals Needing Action" : "Approvals"}
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                {tab === "unread" ? "Approvals Needing Action" : "Approvals"}
+              </h3>
+              {approvalsToRender.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={approveAllMutation.isPending}
+                  onClick={() => approveAllMutation.mutate(approvalsToRender.map((a) => a.id))}
+                >
+                  {approveAllMutation.isPending ? "Approving…" : `Approve all (${approvalsToRender.length})`}
+                </Button>
+              )}
+            </div>
             <div className="grid gap-3">
               {approvalsToRender.map((approval) => (
                 <ApprovalCard
@@ -675,9 +723,22 @@ export function Inbox() {
         <>
           {showSeparatorBefore("join_requests") && <Separator />}
           <div>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Join Requests
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Join Requests
+              </h3>
+              {joinRequests.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={approveAllJoinMutation.isPending}
+                  onClick={() => approveAllJoinMutation.mutate(joinRequests)}
+                >
+                  {approveAllJoinMutation.isPending ? "Approving…" : `Approve all (${joinRequests.length})`}
+                </Button>
+              )}
+            </div>
             <div className="grid gap-3">
               {joinRequests.map((joinRequest) => (
                 <div key={joinRequest.id} className="rounded-xl border border-border bg-card p-4">

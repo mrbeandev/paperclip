@@ -1,6 +1,7 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  agents,
   companyMemberships,
   instanceUserRoles,
   principalPermissionGrants,
@@ -251,6 +252,98 @@ export function accessService(db: Db) {
     });
   }
 
+  /**
+   * Walk the mixed hierarchy tree downward from a given user,
+   * collecting all subordinate userIds and agentIds.
+   */
+  async function getSubordinates(
+    companyId: string,
+    userId: string,
+  ): Promise<{ userIds: string[]; agentIds: string[] }> {
+    const allMembers = await listMembers(companyId);
+    const allAgents = await db
+      .select({
+        id: agents.id,
+        reportsTo: agents.reportsTo,
+        reportsToUserId: agents.reportsToUserId,
+      })
+      .from(agents)
+      .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+
+    const resultUserIds = new Set<string>();
+    const resultAgentIds = new Set<string>();
+    const visited = new Set<string>();
+
+    function walkFromUser(uid: string) {
+      const key = `user:${uid}`;
+      if (visited.has(key)) return;
+      visited.add(key);
+
+      for (const agent of allAgents) {
+        if (agent.reportsToUserId === uid) {
+          resultAgentIds.add(agent.id);
+          walkFromAgent(agent.id);
+        }
+      }
+      for (const member of allMembers) {
+        if (member.principalType === "user" && member.reportsToUserId === uid) {
+          resultUserIds.add(member.principalId);
+          walkFromUser(member.principalId);
+        }
+      }
+    }
+
+    function walkFromAgent(agentId: string) {
+      const key = `agent:${agentId}`;
+      if (visited.has(key)) return;
+      visited.add(key);
+
+      for (const agent of allAgents) {
+        if (agent.reportsTo === agentId) {
+          resultAgentIds.add(agent.id);
+          walkFromAgent(agent.id);
+        }
+      }
+      for (const member of allMembers) {
+        if (member.principalType === "user" && member.reportsToAgentId === agentId) {
+          resultUserIds.add(member.principalId);
+          walkFromUser(member.principalId);
+        }
+      }
+    }
+
+    walkFromUser(userId);
+    return { userIds: Array.from(resultUserIds), agentIds: Array.from(resultAgentIds) };
+  }
+
+  /**
+   * Returns the agent IDs visible to a user in a company, or null if the user
+   * is top-level (sees everything). Used for scope filtering in routes.
+   */
+  async function getVisibleAgentIds(
+    companyId: string,
+    userId: string,
+  ): Promise<string[] | null> {
+    const membership = await getMembership(companyId, "user", userId);
+    if (!membership) return null;
+    if (!membership.reportsToUserId && !membership.reportsToAgentId) return null;
+    const subordinates = await getSubordinates(companyId, userId);
+    return subordinates.agentIds;
+  }
+
+  async function updateMemberHierarchy(
+    memberId: string,
+    reportsToUserId: string | null,
+    reportsToAgentId: string | null,
+  ) {
+    return db
+      .update(companyMemberships)
+      .set({ reportsToUserId, reportsToAgentId, updatedAt: new Date() })
+      .where(eq(companyMemberships.id, memberId))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+  }
+
   return {
     isInstanceAdmin,
     canUser,
@@ -259,6 +352,9 @@ export function accessService(db: Db) {
     ensureMembership,
     listMembers,
     setMemberPermissions,
+    getSubordinates,
+    getVisibleAgentIds,
+    updateMemberHierarchy,
     promoteInstanceAdmin,
     demoteInstanceAdmin,
     listUserCompanyAccess,

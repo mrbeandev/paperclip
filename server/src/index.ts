@@ -193,28 +193,11 @@ export async function startServer(): Promise<StartedServer> {
       });
     }
   
-    const companyRows = await db.select({ id: companies.id }).from(companies);
-    for (const company of companyRows) {
-      const membership = await db
-        .select({ id: companyMemberships.id })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, company.id),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, LOCAL_BOARD_USER_ID),
-          ),
-        )
-        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-      if (membership) continue;
-      await db.insert(companyMemberships).values({
-        companyId: company.id,
-        principalType: "user",
-        principalId: LOCAL_BOARD_USER_ID,
-        status: "active",
-        membershipRole: "owner",
-      });
-    }
+    // NOTE: We intentionally do NOT create company_memberships for the synthetic
+    // local-board user. The board actor has full access via isInstanceAdmin, and
+    // inserting it as a member pollutes the org chart / team members page.
+    // When a real user signs in and claims board ownership, they get memberships
+    // via claimBoardOwnership() in board-claim.ts.
   }
   
   let db;
@@ -408,7 +391,11 @@ export async function startServer(): Promise<StartedServer> {
   if (config.deploymentMode === "local_trusted") {
     await ensureLocalTrustedBoardPrincipal(db as any);
   }
-  if (config.deploymentMode === "authenticated") {
+
+  // Always initialize auth so sessions can be resolved in both modes.
+  // In local_trusted: allows signed-in users to be identified (upgrades from synthetic board to real user).
+  // In authenticated: this is required for auth to work at all.
+  {
     const {
       createBetterAuthHandler,
       createBetterAuthInstance,
@@ -417,19 +404,23 @@ export async function startServer(): Promise<StartedServer> {
       resolveBetterAuthSessionFromHeaders,
     } = await import("./auth/better-auth.js");
     const derivedTrustedOrigins = deriveAuthTrustedOrigins(config);
-    logger.info(
-      {
-        authBaseUrlMode: config.authBaseUrlMode,
-        authPublicBaseUrl: config.authPublicBaseUrl ?? null,
-        trustedOrigins: derivedTrustedOrigins,
-      },
-      "Authenticated mode auth origin configuration",
-    );
+    if (config.deploymentMode === "authenticated") {
+      logger.info(
+        {
+          authBaseUrlMode: config.authBaseUrlMode,
+          authPublicBaseUrl: config.authPublicBaseUrl ?? null,
+          trustedOrigins: derivedTrustedOrigins,
+        },
+        "Authenticated mode auth origin configuration",
+      );
+    }
     const auth = createBetterAuthInstance(db as any, config);
     authRouter = createBetterAuthHandler(auth);
     resolveSession = (req) => resolveBetterAuthSession(auth, req);
     resolveSessionFromHeaders = (headers) => resolveBetterAuthSessionFromHeaders(auth, headers);
-    await initializeBoardClaimChallenge(db as any, { deploymentMode: config.deploymentMode });
+    if (config.deploymentMode === "authenticated") {
+      await initializeBoardClaimChallenge(db as any, { deploymentMode: config.deploymentMode });
+    }
     authReady = true;
   }
   

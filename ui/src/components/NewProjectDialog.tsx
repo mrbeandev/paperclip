@@ -26,8 +26,12 @@ import {
   FolderOpen,
   Github,
   GitBranch,
+  Users,
+  ChevronDown,
 } from "lucide-react";
 import { PROJECT_COLORS } from "@paperclipai/shared";
+import { accessApi } from "../api/access";
+import { agentsApi } from "../api/agents";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 import { StatusBadge } from "./StatusBadge";
@@ -61,6 +65,8 @@ export function NewProjectDialog() {
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
+  const [assignedKeys, setAssignedKeys] = useState<Set<string>>(new Set());
+  const [assignOpen, setAssignOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
 
   const { data: goals } = useQuery({
@@ -68,6 +74,24 @@ export function NewProjectDialog() {
     queryFn: () => goalsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && newProjectOpen,
   });
+
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId && newProjectOpen,
+  });
+
+  const { data: companyAgents } = useQuery({
+    queryKey: queryKeys.agents.list(selectedCompanyId!),
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId && newProjectOpen,
+  });
+
+  // Exclude owners — they always have access
+  const humanMembers = (companyMembers ?? []).filter(
+    (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "owner",
+  );
+  const activeAgents = (companyAgents ?? []).filter((a) => a.status !== "terminated");
 
   const createProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
@@ -92,6 +116,8 @@ export function NewProjectDialog() {
     setWorkspaceLocalPath("");
     setWorkspaceRepoUrl("");
     setWorkspaceError(null);
+    setAssignedKeys(new Set());
+    setAssignOpen(false);
   }
 
   const isAbsolutePath = (value: string) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
@@ -183,8 +209,14 @@ export function NewProjectDialog() {
         });
       }
 
+      // Save member/agent assignments if any were selected
+      if (assignedKeys.size > 0) {
+        await projectsApi.updateAssignments(created.id, Array.from(assignedKeys));
+      }
+
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(selectedCompanyId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(created.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       reset();
       closeNewProject();
     } catch {
@@ -454,6 +486,73 @@ export function NewProjectDialog() {
               placeholder="Target date"
             />
           </div>
+        </div>
+
+        {/* Assign members & agents */}
+        <div className="px-4 py-3 border-t border-border">
+          <button
+            type="button"
+            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => setAssignOpen(!assignOpen)}
+          >
+            <Users className="h-3.5 w-3.5" />
+            <span className="font-medium">
+              {assignedKeys.size > 0
+                ? `${assignedKeys.size} assigned`
+                : "Assign members & agents"}
+            </span>
+            <ChevronDown className={cn("h-3 w-3 transition-transform", assignOpen && "rotate-180")} />
+          </button>
+
+          {assignOpen && (
+            <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
+              {humanMembers.map((m) => {
+                const key = `user:${m.principalId}`;
+                return (
+                  <label key={key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted/50 cursor-pointer select-none text-xs">
+                    <input
+                      type="checkbox"
+                      className="accent-primary shrink-0"
+                      checked={assignedKeys.has(key)}
+                      onChange={() => {
+                        setAssignedKeys((prev) => {
+                          const next = new Set(prev);
+                          next.has(key) ? next.delete(key) : next.add(key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span>{m.userName ?? m.userEmail ?? "Unknown"}</span>
+                    <span className="text-[10px] text-blue-500 ml-auto">member</span>
+                  </label>
+                );
+              })}
+              {activeAgents.map((a) => {
+                const key = `agent:${a.id}`;
+                return (
+                  <label key={key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted/50 cursor-pointer select-none text-xs">
+                    <input
+                      type="checkbox"
+                      className="accent-primary shrink-0"
+                      checked={assignedKeys.has(key)}
+                      onChange={() => {
+                        setAssignedKeys((prev) => {
+                          const next = new Set(prev);
+                          next.has(key) ? next.delete(key) : next.add(key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span>{a.name}</span>
+                    <span className="text-[10px] text-muted-foreground ml-auto">agent</span>
+                  </label>
+                );
+              })}
+              {humanMembers.length === 0 && activeAgents.length === 0 && (
+                <p className="text-xs text-muted-foreground py-1">No members or agents to assign.</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

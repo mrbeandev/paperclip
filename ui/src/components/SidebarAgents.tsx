@@ -39,7 +39,7 @@ function sortByHierarchy(agents: Agent[]): Agent[] {
   return sorted;
 }
 
-export function SidebarAgents() {
+export function SidebarAgents({ isOwner = false }: { isOwner?: boolean }) {
   const [open, setOpen] = useState(true);
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
@@ -92,16 +92,18 @@ export function SidebarAgents() {
               Agents
             </span>
           </CollapsibleTrigger>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              openNewAgent();
-            }}
-            className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label="New agent"
-          >
-            <Plus className="h-3 w-3" />
-          </button>
+          {isOwner && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openNewAgent();
+              }}
+              className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
+              aria-label="New agent"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          )}
         </div>
       </div>
 

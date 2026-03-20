@@ -19,6 +19,7 @@ export const updateCompanySchema = createCompanySchema
     requireBoardApprovalForNewAgents: z.boolean().optional(),
     brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
     logoAssetId: logoAssetIdSchema,
+    metadata: z.record(z.unknown()).optional().nullable(),
   });
 
 export type UpdateCompany = z.infer<typeof updateCompanySchema>;

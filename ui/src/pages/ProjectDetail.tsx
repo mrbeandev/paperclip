@@ -6,6 +6,8 @@ import { budgetsApi } from "../api/budgets";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
@@ -46,17 +48,99 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   return null;
 }
 
-/* ── Overview tab content ── */
+/* ── Overview tab content with analytics ── */
 
 function OverviewContent({
   project,
+  companyId,
+  projectId,
   onUpdate,
   imageUploadHandler,
 }: {
   project: { description: string | null; status: string; targetDate: string | null };
+  companyId: string;
+  projectId: string;
   onUpdate: (data: Record<string, unknown>) => void;
   imageUploadHandler?: (file: File) => Promise<string>;
 }) {
+  const { data: issues } = useQuery({
+    queryKey: queryKeys.issues.listByProject(companyId, projectId),
+    queryFn: () => issuesApi.list(companyId, { projectId }),
+    enabled: !!companyId && !!projectId,
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(companyId),
+    queryFn: () => agentsApi.list(companyId),
+    enabled: !!companyId,
+  });
+
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(companyId),
+    queryFn: () => accessApi.listCompanyMembers(companyId),
+    enabled: !!companyId,
+  });
+
+  const agentMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of agents ?? []) m.set(a.id, a.name);
+    return m;
+  }, [agents]);
+
+  const memberMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const member of members ?? []) {
+      if (member.principalType === "user") {
+        m.set(member.principalId, member.userName ?? member.userEmail ?? "Unknown");
+      }
+    }
+    return m;
+  }, [members]);
+
+  // Issue analytics
+  const analytics = useMemo(() => {
+    const all = issues ?? [];
+    const total = all.length;
+    if (total === 0) return null;
+
+    const byStatus: Record<string, number> = {};
+    const byAssignee: Record<string, { name: string; type: "agent" | "human"; done: number; inProgress: number; total: number }> = {};
+
+    for (const issue of all) {
+      const status = (issue as any).status ?? "unknown";
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
+
+      // Track by assignee
+      let assigneeKey: string | null = null;
+      let assigneeName: string | null = null;
+      let assigneeType: "agent" | "human" = "agent";
+
+      if ((issue as any).assigneeAgentId) {
+        assigneeKey = (issue as any).assigneeAgentId;
+        assigneeName = agentMap.get(assigneeKey!) ?? "Unknown Agent";
+        assigneeType = "agent";
+      } else if ((issue as any).assigneeUserId) {
+        assigneeKey = (issue as any).assigneeUserId;
+        assigneeName = memberMap.get(assigneeKey!) ?? "Unknown Member";
+        assigneeType = "human";
+      }
+
+      if (assigneeKey && assigneeName) {
+        if (!byAssignee[assigneeKey]) {
+          byAssignee[assigneeKey] = { name: assigneeName, type: assigneeType, done: 0, inProgress: 0, total: 0 };
+        }
+        byAssignee[assigneeKey].total++;
+        if (status === "done" || status === "closed") byAssignee[assigneeKey].done++;
+        if (status === "in_progress") byAssignee[assigneeKey].inProgress++;
+      }
+    }
+
+    const done = (byStatus["done"] ?? 0) + (byStatus["closed"] ?? 0);
+    const completionRate = total > 0 ? Math.round((done / total) * 100) : 0;
+
+    return { total, byStatus, byAssignee, done, completionRate };
+  }, [issues, agentMap, memberMap]);
+
   return (
     <div className="space-y-6">
       <InlineEditor
@@ -83,6 +167,82 @@ function OverviewContent({
           </div>
         )}
       </div>
+
+      {/* Task Analytics */}
+      {analytics && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold">Task Report</h3>
+
+          {/* Completion bar */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">{analytics.done} of {analytics.total} tasks completed</span>
+              <span className="font-medium">{analytics.completionRate}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-green-500 transition-all duration-500"
+                style={{ width: `${analytics.completionRate}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Status breakdown */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { key: "done", label: "Done", color: "text-green-500" },
+              { key: "in_progress", label: "In Progress", color: "text-cyan-500" },
+              { key: "todo", label: "To Do", color: "text-yellow-500" },
+              { key: "blocked", label: "Blocked", color: "text-red-500" },
+            ].map(({ key, label, color }) => (
+              <div key={key} className="rounded-md border border-border px-3 py-2">
+                <p className={`text-lg font-semibold ${color}`}>{(analytics.byStatus[key] ?? 0) + (key === "done" ? (analytics.byStatus["closed"] ?? 0) : 0)}</p>
+                <p className="text-[11px] text-muted-foreground">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Team performance */}
+          {Object.keys(analytics.byAssignee).length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Team Performance</h3>
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30">
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Assignee</th>
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">Done</th>
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">In Progress</th>
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">Total</th>
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(analytics.byAssignee)
+                      .sort(([, a], [, b]) => b.done - a.done)
+                      .map(([key, data]) => (
+                        <tr key={key} className="border-b border-border last:border-0">
+                          <td className="px-3 py-2">
+                            <span className="font-medium">{data.name}</span>
+                            <span className={`ml-1.5 text-[10px] uppercase ${data.type === "human" ? "text-blue-500" : "text-muted-foreground"}`}>
+                              {data.type}
+                            </span>
+                          </td>
+                          <td className="text-center px-3 py-2 text-green-500 font-medium">{data.done}</td>
+                          <td className="text-center px-3 py-2 text-cyan-500">{data.inProgress}</td>
+                          <td className="text-center px-3 py-2">{data.total}</td>
+                          <td className="text-center px-3 py-2 font-medium">
+                            {data.total > 0 ? Math.round((data.done / data.total) * 100) : 0}%
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -298,6 +458,26 @@ export function ProjectDetail() {
       return assetsApi.uploadImage(resolvedCompanyId, file, `projects/${projectLookupRef || "draft"}`);
     },
   });
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.members(resolvedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(resolvedCompanyId!),
+    enabled: !!resolvedCompanyId,
+  });
+
+  const isProjectOwner = useMemo(() => {
+    if (!session?.user || !companyMembers) return false;
+    const me = companyMembers.find(
+      (m) => m.principalType === "user" && m.principalId === session.user.id,
+    );
+    return me?.membershipRole === "owner";
+  }, [session, companyMembers]);
 
   const { data: budgetOverview } = useQuery({
     queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
@@ -542,9 +722,11 @@ export function ProjectDetail() {
         />
       </Tabs>
 
-      {activeTab === "overview" && (
+      {activeTab === "overview" && resolvedCompanyId && (
         <OverviewContent
           project={project}
+          companyId={resolvedCompanyId}
+          projectId={project.id}
           onUpdate={(data) => updateProject.mutate(data)}
           imageUploadHandler={async (file) => {
             const asset = await uploadImage.mutateAsync(file);
@@ -564,7 +746,7 @@ export function ProjectDetail() {
             onUpdate={(data) => updateProject.mutate(data)}
             onFieldUpdate={updateProjectField}
             getFieldSaveState={(field) => fieldSaveStates[field] ?? "idle"}
-            onArchive={(archived) => archiveProject.mutate(archived)}
+            onArchive={isProjectOwner ? (archived) => archiveProject.mutate(archived) : undefined}
             archivePending={archiveProject.isPending}
           />
         </div>

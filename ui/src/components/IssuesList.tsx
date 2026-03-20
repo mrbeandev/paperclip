@@ -158,6 +158,7 @@ interface IssuesListProps {
   initialSearch?: string;
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
+  canCreateIssue?: boolean;
 }
 
 export function IssuesList({
@@ -173,6 +174,7 @@ export function IssuesList({
   initialSearch,
   onSearchChange,
   onUpdateIssue,
+  canCreateIssue = true,
 }: IssuesListProps) {
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialog();
@@ -310,10 +312,12 @@ export function IssuesList({
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-2 sm:gap-3">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <Button size="sm" variant="outline" onClick={() => openNewIssue(newIssueDefaults())}>
-            <Plus className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">New Issue</span>
-          </Button>
+          {canCreateIssue && (
+            <Button size="sm" variant="outline" onClick={() => openNewIssue(newIssueDefaults())}>
+              <Plus className="h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">New Issue</span>
+            </Button>
+          )}
           <div className="relative w-48 sm:w-64 md:w-80">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -587,8 +591,8 @@ export function IssuesList({
         <EmptyState
           icon={CircleDot}
           message="No issues match the current filters or search."
-          action="Create Issue"
-          onAction={() => openNewIssue(newIssueDefaults())}
+          action={canCreateIssue ? "Create Issue" : undefined}
+          onAction={canCreateIssue ? () => openNewIssue(newIssueDefaults()) : undefined}
         />
       )}
 
@@ -620,14 +624,14 @@ export function IssuesList({
                     {group.label}
                   </span>
                 </CollapsibleTrigger>
-                <Button
+                {canCreateIssue && <Button
                   variant="ghost"
                   size="icon-xs"
                   className="ml-auto text-muted-foreground"
                   onClick={() => openNewIssue(newIssueDefaults(group.key))}
                 >
                   <Plus className="h-3 w-3" />
-                </Button>
+                </Button>}
               </div>
             )}
             <CollapsibleContent>

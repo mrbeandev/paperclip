@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "@/lib/router";
+import { Link, useNavigate, useParams } from "@/lib/router";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { healthApi } from "../api/health";
@@ -25,10 +25,6 @@ const adapterLabels: Record<string, string> = {
 
 const ENABLED_INVITE_ADAPTERS = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "cursor"]);
 
-function dateTime(value: string) {
-  return new Date(value).toLocaleString();
-}
-
 function readNestedString(value: unknown, path: string[]): string | null {
   let current: unknown = value;
   for (const segment of path) {
@@ -40,6 +36,7 @@ function readNestedString(value: unknown, path: string[]): string | null {
 
 export function InviteLandingPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const params = useParams();
   const token = (params.token ?? "").trim();
   const [joinType, setJoinType] = useState<JoinType>("human");
@@ -67,31 +64,33 @@ export function InviteLandingPage() {
   });
 
   const invite = inviteQuery.data;
-  const allowedJoinTypes = invite?.allowedJoinTypes ?? "both";
-  const availableJoinTypes = useMemo(() => {
-    if (invite?.inviteType === "bootstrap_ceo") return ["human"] as JoinType[];
-    if (allowedJoinTypes === "both") return ["human", "agent"] as JoinType[];
-    return [allowedJoinTypes] as JoinType[];
-  }, [invite?.inviteType, allowedJoinTypes]);
+  const isBootstrap = invite?.inviteType === "bootstrap_ceo";
+  const isAgentOnly = invite?.allowedJoinTypes === "agent";
+  const session = sessionQuery.data;
 
+  // Sync joinType default when invite loads (agent-only invites)
   useEffect(() => {
-    if (!availableJoinTypes.includes(joinType)) {
-      setJoinType(availableJoinTypes[0] ?? "human");
-    }
-  }, [availableJoinTypes, joinType]);
+    if (invite?.allowedJoinTypes === "agent") setJoinType("agent");
+  }, [invite?.allowedJoinTypes]);
 
-  const requiresAuthForHuman =
-    joinType === "human" &&
-    healthQuery.data?.deploymentMode === "authenticated" &&
-    !sessionQuery.data;
+  // For human-only invites with no existing session: redirect to /auth?invite={token}
+  useEffect(() => {
+    if (
+      !inviteQuery.isLoading &&
+      !sessionQuery.isLoading &&
+      invite &&
+      !isBootstrap &&
+      !isAgentOnly &&
+      !session
+    ) {
+      navigate(`/auth?invite=${encodeURIComponent(token)}`, { replace: true });
+    }
+  }, [invite, isBootstrap, isAgentOnly, session, inviteQuery.isLoading, sessionQuery.isLoading, token, navigate]);
 
   const acceptMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (joinType: JoinType) => {
       if (!invite) throw new Error("Invite not found");
-      if (invite.inviteType === "bootstrap_ceo") {
-        return accessApi.acceptInvite(token, { requestType: "human" });
-      }
-      if (joinType === "human") {
+      if (isBootstrap || joinType === "human") {
         return accessApi.acceptInvite(token, { requestType: "human" });
       }
       return accessApi.acceptInvite(token, {
@@ -107,7 +106,13 @@ export function InviteLandingPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       const asBootstrap =
         payload && typeof payload === "object" && "bootstrapAccepted" in (payload as Record<string, unknown>);
-      setResult({ kind: asBootstrap ? "bootstrap" : "join", payload });
+      if (asBootstrap) {
+        setResult({ kind: "bootstrap", payload });
+      } else if (isBootstrap) {
+        setResult({ kind: "bootstrap", payload });
+      } else {
+        setResult({ kind: "join", payload });
+      }
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Failed to accept invite");
@@ -119,13 +124,13 @@ export function InviteLandingPage() {
   }
 
   if (inviteQuery.isLoading || healthQuery.isLoading || sessionQuery.isLoading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading invite...</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading…</div>;
   }
 
   if (inviteQuery.error || !invite) {
     return (
-      <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
           <h1 className="text-lg font-semibold">Invite not available</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             This invite may be expired, revoked, or already used.
@@ -135,15 +140,23 @@ export function InviteLandingPage() {
     );
   }
 
+  // For human invites while not signed in — redirect is handled by useEffect above,
+  // show loading briefly while redirect happens
+  if (!isBootstrap && !isAgentOnly && !session) {
+    return <div className="min-h-screen flex items-center justify-center p-4">
+      <p className="text-sm text-muted-foreground">Redirecting…</p>
+    </div>;
+  }
+
   if (result?.kind === "bootstrap") {
     return (
-      <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
           <h1 className="text-lg font-semibold">Bootstrap complete</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             The first instance admin is now configured. You can continue to the board.
           </p>
-          <Button asChild className="mt-4">
+          <Button asChild className="mt-4 w-full">
             <Link to="/">Open board</Link>
           </Button>
         </div>
@@ -176,7 +189,7 @@ export function InviteLandingPage() {
         <div className="rounded-lg border border-border bg-card p-6">
           <h1 className="text-lg font-semibold">Join request submitted</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Your request is pending admin approval. You will not have access until approved.
+            Your request is pending admin approval.
           </p>
           <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
             Request ID: <span className="font-mono">{payload.id}</span>
@@ -221,97 +234,144 @@ export function InviteLandingPage() {
     );
   }
 
-  return (
-    <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">
-          {invite.inviteType === "bootstrap_ceo" ? "Bootstrap your Paperclip instance" : "Join this Paperclip company"}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">Invite expires {dateTime(invite.expiresAt)}.</p>
-
-        {invite.inviteType !== "bootstrap_ceo" && (
-          <div className="mt-5 flex gap-2">
-            {availableJoinTypes.map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setJoinType(type)}
-                className={`rounded-md border px-3 py-1.5 text-sm ${
-                  joinType === type
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border bg-background text-foreground"
-                }`}
-              >
-                Join as {type}
-              </button>
-            ))}
+  // Bootstrap invite — no session required in local mode, but show sign-in prompt otherwise
+  if (isBootstrap) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm space-y-5">
+          <div>
+            <h1 className="text-lg font-semibold">Bootstrap your instance</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Set up the first admin account for this Paperclip instance.
+            </p>
           </div>
-        )}
-
-        {joinType === "agent" && invite.inviteType !== "bootstrap_ceo" && (
-          <div className="mt-4 space-y-3">
-            <label className="block text-sm">
-              <span className="mb-1 block text-muted-foreground">Agent name</span>
-              <input
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                value={agentName}
-                onChange={(event) => setAgentName(event.target.value)}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-muted-foreground">Adapter type</span>
-              <select
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                value={adapterType}
-                onChange={(event) => setAdapterType(event.target.value as AgentAdapterType)}
+          {!session && healthQuery.data?.deploymentMode === "authenticated" && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+              You need to be signed in to accept this bootstrap invite.{" "}
+              <Link
+                to={`/auth?next=${encodeURIComponent(`/invite/${token}`)}`}
+                className="font-medium text-foreground underline underline-offset-2"
               >
-                {joinAdapterOptions.map((type) => (
-                  <option key={type} value={type} disabled={!ENABLED_INVITE_ADAPTERS.has(type)}>
-                    {adapterLabels[type]}{!ENABLED_INVITE_ADAPTERS.has(type) ? " (Coming soon)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-muted-foreground">Capabilities (optional)</span>
-              <textarea
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                rows={4}
-                value={capabilities}
-                onChange={(event) => setCapabilities(event.target.value)}
-              />
-            </label>
-          </div>
-        )}
-
-        {requiresAuthForHuman && (
-          <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            Sign in or create an account before submitting a human join request.
-            <div className="mt-2">
-              <Button asChild size="sm" variant="outline">
-                <Link to={`/auth?next=${encodeURIComponent(`/invite/${token}`)}`}>Sign in / Create account</Link>
-              </Button>
+                Sign in
+              </Link>
             </div>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <Button
+            className="w-full"
+            disabled={acceptMutation.isPending}
+            onClick={() => acceptMutation.mutate("human")}
+          >
+            {acceptMutation.isPending ? "Accepting…" : "Accept bootstrap invite"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Agent-only invite (or "both" with signed-in user choosing agent)
+  const showHumanOption = invite.allowedJoinTypes !== "agent" && !!session;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="rounded-xl border border-border bg-card p-8 shadow-sm space-y-5">
+          <div>
+            <h1 className="text-lg font-semibold">You've been invited</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Join this Paperclip workspace as an agent.
+            </p>
           </div>
-        )}
 
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+          {/* Join type tabs — only shown when both options are available */}
+          {showHumanOption && (
+            <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+              {(["human", "agent"] as JoinType[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setJoinType(type)}
+                  className={`flex-1 py-2 font-medium transition-colors ${
+                    joinType === type
+                      ? "bg-foreground text-background"
+                      : "bg-background text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {type === "human" ? "Join as member" : "Join as agent"}
+                </button>
+              ))}
+            </div>
+          )}
 
-        <Button
-          className="mt-5"
-          disabled={
-            acceptMutation.isPending ||
-            (joinType === "agent" && invite.inviteType !== "bootstrap_ceo" && agentName.trim().length === 0) ||
-            requiresAuthForHuman
-          }
-          onClick={() => acceptMutation.mutate()}
-        >
-          {acceptMutation.isPending
-            ? "Submitting…"
-            : invite.inviteType === "bootstrap_ceo"
-              ? "Accept bootstrap invite"
-              : "Submit join request"}
-        </Button>
+          {/* Signed-in user info for human join */}
+          {joinType === "human" && session && (
+            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 flex items-center gap-2 text-sm">
+              <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center shrink-0 text-xs font-medium text-primary">
+                {(session.user.name ?? session.user.email ?? "?")[0]?.toUpperCase()}
+              </div>
+              <span className="text-muted-foreground truncate">
+                Joining as <span className="font-medium text-foreground">{session.user.name ?? session.user.email}</span>
+              </span>
+            </div>
+          )}
+
+          {/* Agent form */}
+          {joinType === "agent" && (
+            <div className="space-y-3">
+              <label className="block text-sm">
+                <span className="mb-1.5 block font-medium">Agent name</span>
+                <input
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="e.g. My Claude Agent"
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1.5 block font-medium">Adapter type</span>
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={adapterType}
+                  onChange={(e) => setAdapterType(e.target.value as AgentAdapterType)}
+                >
+                  {joinAdapterOptions.map((type) => (
+                    <option key={type} value={type} disabled={!ENABLED_INVITE_ADAPTERS.has(type)}>
+                      {adapterLabels[type]}{!ENABLED_INVITE_ADAPTERS.has(type) ? " (Coming soon)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1.5 block font-medium">
+                  Capabilities <span className="font-normal text-muted-foreground">(optional)</span>
+                </span>
+                <textarea
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  rows={3}
+                  value={capabilities}
+                  onChange={(e) => setCapabilities(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <Button
+            className="w-full"
+            disabled={
+              acceptMutation.isPending ||
+              (joinType === "agent" && agentName.trim().length === 0)
+            }
+            onClick={() => acceptMutation.mutate(joinType)}
+          >
+            {acceptMutation.isPending
+              ? "Accepting…"
+              : joinType === "human"
+                ? "Accept invite"
+                : "Register agent"}
+          </Button>
+        </div>
       </div>
     </div>
   );

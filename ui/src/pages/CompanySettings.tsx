@@ -1,13 +1,16 @@
-import { ChangeEvent, useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { companiesApi } from "../api/companies";
-import { accessApi } from "../api/access";
+import { accessApi, type CompanyMember } from "../api/access";
+import { authApi } from "../api/auth";
+import { agentsApi } from "../api/agents";
+import { projectsApi } from "../api/projects";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
-import { Settings, Check } from "lucide-react";
+import { Settings, Check, User, Bot, ChevronDown, X, Plus } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import {
   Field,
@@ -30,6 +33,26 @@ export function CompanySettings() {
   } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const { data: settingsMembers } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const isCompanyOwner = useMemo(() => {
+    if (!session?.user || !settingsMembers) return false;
+    const me = settingsMembers.find(
+      (m: CompanyMember) => m.principalType === "user" && m.principalId === session.user.id,
+    );
+    return me?.membershipRole === "owner";
+  }, [session, settingsMembers]);
 
   // General settings local state
   const [companyName, setCompanyName] = useState("");
@@ -461,8 +484,11 @@ export function CompanySettings() {
         </div>
       </div>
 
-      {/* Danger Zone */}
-      <div className="space-y-4">
+      {/* Hierarchy */}
+      {selectedCompanyId && <HierarchySection companyId={selectedCompanyId} />}
+
+      {/* Danger Zone — owner only */}
+      {isCompanyOwner && <div className="space-y-4">
         <div className="text-xs font-medium text-destructive uppercase tracking-wide">
           Danger Zone
         </div>
@@ -511,6 +537,395 @@ export function CompanySettings() {
               </span>
             )}
           </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+function HierarchySection({ companyId }: { companyId: string }) {
+  const queryClient = useQueryClient();
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(companyId),
+    queryFn: () => accessApi.listCompanyMembers(companyId),
+    enabled: !!companyId,
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(companyId),
+    queryFn: () => agentsApi.list(companyId),
+    enabled: !!companyId,
+  });
+
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(companyId),
+    queryFn: () => projectsApi.list(companyId),
+    enabled: !!companyId,
+  });
+
+  const { data: company } = useQuery({
+    queryKey: queryKeys.companies.detail(companyId),
+    queryFn: () => companiesApi.get(companyId),
+    enabled: !!companyId,
+  });
+
+  const companyMeta = (company as any)?.metadata ?? {};
+  const projectAssignments: Record<string, string[]> = companyMeta.projectAssignments ?? {};
+
+  const currentUserId = session?.user?.id ?? null;
+  const isOwner = (members ?? []).some(
+    (m: CompanyMember) =>
+      m.principalType === "user" &&
+      m.principalId === currentUserId &&
+      m.membershipRole === "owner",
+  );
+
+  // For subordinate scoping: members only see themselves + their direct/indirect reports
+  const { data: subordinates } = useQuery({
+    queryKey: queryKeys.access.mySubordinates(companyId),
+    queryFn: () => accessApi.getMySubordinates(companyId),
+    enabled: !!companyId && !isOwner,
+  });
+
+  const allHumans = (members ?? []).filter(
+    (m: CompanyMember) => m.principalType === "user" && m.status === "active",
+  );
+  const allActiveAgents = (agents ?? []).filter((a) => a.status !== "terminated");
+
+  // Owners see everything; members see only themselves + subordinates
+  const humanMembers = isOwner
+    ? allHumans
+    : allHumans.filter((m: CompanyMember) => {
+        if (m.principalId === currentUserId) return true; // always see yourself
+        if (m.membershipRole === "owner") return false; // never show owners to members
+        if (subordinates?.isTopLevel) return true;
+        return subordinates?.userIds.includes(m.principalId) ?? false;
+      });
+
+  const activeAgents = isOwner
+    ? allActiveAgents
+    : allActiveAgents.filter((a) => {
+        if (subordinates?.isTopLevel) return true;
+        return subordinates?.agentIds.includes(a.id) ?? false;
+      });
+
+  const activeProjects = (projects ?? []).filter((p: any) => !p.archivedAt);
+
+  const allEntities = [
+    ...humanMembers.map((m) => ({
+      key: `user:${m.principalId}`,
+      name: m.userName ?? "User",
+      type: "human" as const,
+      id: m.principalId,
+      memberId: m.id,
+    })),
+    ...activeAgents.map((a) => ({
+      key: `agent:${a.id}`,
+      name: a.name,
+      type: "agent" as const,
+      id: a.id,
+      memberId: null as string | null,
+    })),
+  ];
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.access.members(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.org(companyId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.companies.detail(companyId) });
+  };
+
+  const assignAgentMutation = useMutation({
+    mutationFn: ({
+      agentId,
+      parentUserId,
+      parentAgentId,
+    }: {
+      agentId: string;
+      parentUserId: string | null;
+      parentAgentId: string | null;
+    }) =>
+      agentsApi.update(agentId, {
+        reportsToUserId: parentUserId,
+        reportsTo: parentAgentId,
+      }),
+    onSuccess: invalidateAll,
+  });
+
+  const assignHumanMutation = useMutation({
+    mutationFn: ({
+      memberId,
+      parentUserId,
+      parentAgentId,
+    }: {
+      memberId: string;
+      parentUserId: string | null;
+      parentAgentId: string | null;
+    }) =>
+      accessApi.updateMemberHierarchy(companyId, memberId, {
+        reportsToUserId: parentUserId,
+        reportsToAgentId: parentAgentId,
+      }),
+    onSuccess: invalidateAll,
+  });
+
+  const saveProjectAssignments = useMutation({
+    mutationFn: (nextAssignments: Record<string, string[]>) =>
+      companiesApi.update(companyId, {
+        metadata: { ...companyMeta, projectAssignments: nextAssignments },
+      } as any),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.detail(companyId) });
+    },
+  });
+
+  function toggleProjectAssignment(entityKey: string, projectId: string) {
+    const current = projectAssignments[entityKey] ?? [];
+    const next = current.includes(projectId)
+      ? current.filter((id) => id !== projectId)
+      : [...current, projectId];
+    saveProjectAssignments.mutate({ ...projectAssignments, [entityKey]: next });
+  }
+
+  if (allEntities.length < 2) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        Hierarchy & Project Assignments
+      </div>
+      <div className="space-y-3">
+        {allEntities.map((entity) => {
+          // Determine current parent
+          let currentParentKey: string | null = null;
+          if (entity.type === "agent") {
+            const agent = activeAgents.find((a) => a.id === entity.id);
+            if (agent) {
+              if ((agent as any).reportsToUserId)
+                currentParentKey = `user:${(agent as any).reportsToUserId}`;
+              else if (agent.reportsTo) currentParentKey = `agent:${agent.reportsTo}`;
+            }
+          } else {
+            const member = humanMembers.find((m) => m.principalId === entity.id);
+            if (member) {
+              if (member.reportsToUserId) currentParentKey = `user:${member.reportsToUserId}`;
+              else if (member.reportsToAgentId)
+                currentParentKey = `agent:${member.reportsToAgentId}`;
+            }
+          }
+
+          const parentEntity = allEntities.find((e) => e.key === currentParentKey);
+          const assignedProjectIds = projectAssignments[entity.key] ?? [];
+
+          return (
+            <HierarchyNodeCard
+              key={entity.key}
+              entity={entity}
+              parentEntity={parentEntity ?? null}
+              allEntities={allEntities}
+              assignedProjectIds={assignedProjectIds}
+              activeProjects={activeProjects}
+              onAssignParent={(parentKey) => {
+                const parentUserId = parentKey?.startsWith("user:") ? parentKey.slice(5) : null;
+                const parentAgentId = parentKey?.startsWith("agent:") ? parentKey.slice(6) : null;
+
+                if (entity.type === "agent") {
+                  assignAgentMutation.mutate({
+                    agentId: entity.id,
+                    parentUserId,
+                    parentAgentId,
+                  });
+                } else if (entity.memberId) {
+                  assignHumanMutation.mutate({
+                    memberId: entity.memberId,
+                    parentUserId,
+                    parentAgentId,
+                  });
+                }
+              }}
+              onToggleProject={(projectId) => toggleProjectAssignment(entity.key, projectId)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HierarchyNodeCard({
+  entity,
+  parentEntity,
+  allEntities,
+  assignedProjectIds,
+  activeProjects,
+  onAssignParent,
+  onToggleProject,
+}: {
+  entity: { key: string; name: string; type: "human" | "agent"; id: string };
+  parentEntity: { key: string; name: string; type: "human" | "agent" } | null;
+  allEntities: { key: string; name: string; type: "human" | "agent" }[];
+  assignedProjectIds: string[];
+  activeProjects: any[];
+  onAssignParent: (parentKey: string | null) => void;
+  onToggleProject: (projectId: string) => void;
+}) {
+  const [parentOpen, setParentOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+
+  const Icon = entity.type === "human" ? User : Bot;
+
+  return (
+    <div className="rounded-md border border-border overflow-visible">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <div
+          className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+            entity.type === "human" ? "bg-primary/10" : "bg-muted/60"
+          }`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{entity.name}</p>
+          <p className="text-[10px] text-muted-foreground uppercase">
+            {entity.type === "human" ? "Human" : "Agent"}
+          </p>
+        </div>
+        <div className="relative">
+          <button
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded px-2 py-1 hover:bg-accent/50"
+            onClick={() => {
+              setParentOpen(!parentOpen);
+              setProjectsOpen(false);
+            }}
+          >
+            {parentEntity ? (
+              <>
+                Reports to: <span className="font-medium text-foreground">{parentEntity.name}</span>
+              </>
+            ) : (
+              "Top level"
+            )}
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {parentOpen && (
+            <div className="absolute right-0 top-full mt-1 z-10 w-56 rounded-md border border-border bg-popover shadow-lg py-1 max-h-48 overflow-y-auto">
+              <button
+                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors ${
+                  !parentEntity ? "bg-accent/30 font-medium" : ""
+                }`}
+                onClick={() => {
+                  onAssignParent(null);
+                  setParentOpen(false);
+                }}
+              >
+                None (top level)
+              </button>
+              {allEntities
+                .filter((e) => e.key !== entity.key)
+                .map((e) => (
+                  <button
+                    key={e.key}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors flex items-center gap-2 ${
+                      parentEntity?.key === e.key ? "bg-accent/30 font-medium" : ""
+                    }`}
+                    onClick={() => {
+                      onAssignParent(e.key);
+                      setParentOpen(false);
+                    }}
+                  >
+                    {e.type === "human" ? (
+                      <User className="h-3 w-3 shrink-0" />
+                    ) : (
+                      <Bot className="h-3 w-3 shrink-0" />
+                    )}
+                    {e.name}
+                    {parentEntity?.key === e.key && (
+                      <Check className="h-3 w-3 ml-auto text-primary" />
+                    )}
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Project assignments */}
+      <div className="px-3 py-2 border-t border-border flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground shrink-0">Projects:</span>
+        {assignedProjectIds.length > 0 ? (
+          assignedProjectIds.map((pid) => {
+            const proj = activeProjects.find((p: any) => p.id === pid);
+            if (!proj) return null;
+            return (
+              <span
+                key={pid}
+                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px]"
+              >
+                <span
+                  className="h-2 w-2 rounded-sm shrink-0"
+                  style={{ backgroundColor: proj.color ?? "#6366f1" }}
+                />
+                {proj.name}
+                <button
+                  className="hover:text-destructive"
+                  onClick={() => onToggleProject(pid)}
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </span>
+            );
+          })
+        ) : (
+          <span className="text-xs text-muted-foreground/50">None</span>
+        )}
+        <div className="relative">
+          <button
+            className="inline-flex items-center gap-1 rounded-md border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent/50 transition-colors"
+            onClick={() => {
+              setProjectsOpen(!projectsOpen);
+              setParentOpen(false);
+            }}
+          >
+            <Plus className="h-2.5 w-2.5" /> Assign
+          </button>
+          {projectsOpen && (
+            <div className="absolute left-0 top-full mt-1 z-10 w-48 rounded-md border border-border bg-popover shadow-lg py-1 max-h-48 overflow-y-auto">
+              {activeProjects.length > 0 ? (
+                activeProjects.map((p: any) => {
+                  const assigned = assignedProjectIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors flex items-center gap-2 ${
+                        assigned ? "bg-accent/30" : ""
+                      }`}
+                      onClick={() => {
+                        onToggleProject(p.id);
+                      }}
+                    >
+                      <span
+                        className="h-2 w-2 rounded-sm shrink-0"
+                        style={{ backgroundColor: p.color ?? "#6366f1" }}
+                      />
+                      {p.name}
+                      {assigned && <Check className="h-3 w-3 ml-auto text-primary" />}
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-muted-foreground px-3 py-2">No projects</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

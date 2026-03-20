@@ -13,4 +13,3 @@ export { activityApi } from "./activity";
 export { dashboardApi } from "./dashboard";
 export { heartbeatsApi } from "./heartbeats";
 export { sidebarBadgesApi } from "./sidebarBadges";
-export { teamMembersApi } from "./teamMembers";

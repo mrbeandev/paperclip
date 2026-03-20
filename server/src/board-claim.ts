@@ -106,6 +106,16 @@ export async function claimBoardOwnership(
       .delete(instanceUserRoles)
       .where(and(eq(instanceUserRoles.userId, LOCAL_BOARD_USER_ID), eq(instanceUserRoles.role, "instance_admin")));
 
+    // Remove any orphan local-board memberships (legacy or from earlier code paths)
+    await tx
+      .delete(companyMemberships)
+      .where(
+        and(
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.principalId, LOCAL_BOARD_USER_ID),
+        ),
+      );
+
     const allCompanies = await tx.select({ id: companies.id }).from(companies);
     for (const company of allCompanies) {
       const existing = await tx

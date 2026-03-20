@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { authApi } from "./api/auth";
+import { companiesApi } from "./api/companies";
+import { accessApi } from "./api/access";
+import { projectsApi } from "./api/projects";
 import { healthApi } from "./api/health";
 import { Dashboard } from "./pages/Dashboard";
 import { Companies } from "./pages/Companies";
@@ -23,6 +26,7 @@ import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
 import { TeamMembers } from "./pages/TeamMembers";
+import { MemberDetail } from "./pages/MemberDetail";
 import { DesignGuide } from "./pages/DesignGuide";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { PluginManager } from "./pages/PluginManager";
@@ -30,6 +34,7 @@ import { PluginSettings } from "./pages/PluginSettings";
 import { PluginPage } from "./pages/PluginPage";
 import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
 import { OrgChart } from "./pages/OrgChart";
+import { OverallDashboard } from "./pages/OverallDashboard";
 import { NewAgent } from "./pages/NewAgent";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
@@ -56,6 +61,203 @@ function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: b
       </div>
     </div>
   );
+}
+
+function PendingApprovalPage() {
+  const queryClient = useQueryClient();
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  // Poll for company access every 5 seconds
+  useQuery({
+    queryKey: queryKeys.companies.all,
+    queryFn: () => companiesApi.list().catch(() => []),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
+          <svg className="h-6 w-6 text-primary animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="text-lg font-semibold">Waiting for approval</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your join request has been submitted. An admin needs to approve your access before you can continue.
+          </p>
+        </div>
+        {session?.user && (
+          <p className="text-xs text-muted-foreground">
+            Signed in as <span className="font-medium text-foreground">{session.user.name ?? session.user.email}</span>
+          </p>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          This page will refresh automatically once approved.
+        </p>
+        <button
+          onClick={() => {
+            authApi.signOut().then(() => {
+              queryClient.clear();
+              window.location.href = "/auth";
+            });
+          }}
+          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WaitingForAssignmentPage() {
+  const queryClient = useQueryClient();
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
+          <svg className="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="text-lg font-semibold">Waiting for assignment</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your account is active but you haven't been assigned to any projects or teams yet. Ask your admin to assign you.
+          </p>
+        </div>
+        {session?.user && (
+          <p className="text-xs text-muted-foreground">
+            Signed in as <span className="font-medium text-foreground">{session.user.name ?? session.user.email}</span>
+          </p>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          This page will refresh automatically once assigned.
+        </p>
+        <button
+          onClick={() => {
+            authApi.signOut().then(() => {
+              queryClient.clear();
+              window.location.href = "/auth";
+            });
+          }}
+          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CompanyAccessGate() {
+  const { data: health } = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    retry: false,
+  });
+
+  const { data: companies, isLoading: companiesLoading } = useQuery({
+    queryKey: queryKeys.companies.all,
+    queryFn: () => companiesApi.list().catch(() => []),
+  });
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const isLocalTrusted = health?.deploymentMode === "local_trusted";
+  const firstCompanyId = companies?.[0]?.id ?? null;
+  const noCompanies = companies !== undefined && companies.length === 0;
+
+  const { data: members, isLoading: membersLoading } = useQuery({
+    queryKey: queryKeys.access.members(firstCompanyId ?? "__none__"),
+    queryFn: () => accessApi.listCompanyMembers(firstCompanyId!),
+    enabled: !!firstCompanyId,
+    refetchInterval: 5000,
+  });
+
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(firstCompanyId ?? "__none__"),
+    queryFn: () => projectsApi.list(firstCompanyId!),
+    enabled: !!firstCompanyId,
+    refetchInterval: 5000,
+  });
+
+  // Check if user is an instance admin (only when no companies)
+  const { data: adminCompanyAccess, isLoading: adminCheckLoading } = useQuery({
+    queryKey: ["admin-check", session?.user?.id],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/admin/users/${session!.user.id}/company-access`, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    enabled: !isLocalTrusted && !!session?.user && noCompanies,
+    retry: false,
+  });
+
+  // --- All hooks above, all conditional returns below ---
+
+  if (companiesLoading) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  }
+
+  // User is authenticated but has no company access — pending approval
+  // Instance admins and local_trusted users always pass through
+  if (!isLocalTrusted && noCompanies) {
+    if (adminCheckLoading) {
+      return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+    }
+    if (!adminCompanyAccess) {
+      return <PendingApprovalPage />;
+    }
+    // Admin with no companies — let them through to create one via onboarding
+  }
+
+  // Wait for members to load before checking assignment status
+  if (firstCompanyId && membersLoading) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  }
+
+  // Check if non-owner member has any assignments
+  if (session?.user && members && firstCompanyId) {
+    const me = members.find(
+      (m) => m.principalType === "user" && m.principalId === session.user.id,
+    );
+    // Only apply assignment check to non-owner members
+    if (me && me.membershipRole !== "owner") {
+      const hasHierarchy = !!(me.reportsToUserId || me.reportsToAgentId) ||
+        members.some((m) => m.reportsToUserId === session.user.id);
+      const hasProjects = (projects ?? []).length > 0;
+
+      if (!hasHierarchy && !hasProjects) {
+        return <WaitingForAssignmentPage />;
+      }
+    }
+  }
+
+  return <Outlet />;
 }
 
 function CloudAccessGate() {
@@ -96,12 +298,22 @@ function CloudAccessGate() {
   }
 
   if (isAuthenticatedMode && healthQuery.data?.bootstrapStatus === "bootstrap_pending") {
-    return <BootstrapPendingPage hasActiveInvite={healthQuery.data.bootstrapInviteActive} />;
+    // If bootstrap pending but user is already signed in, show the CLI page (edge case)
+    if (sessionQuery.data) {
+      return <BootstrapPendingPage hasActiveInvite={healthQuery.data.bootstrapInviteActive} />;
+    }
+    // Otherwise redirect to auth so they can create the admin account
+    return <Navigate to="/auth" replace />;
   }
 
   if (isAuthenticatedMode && !sessionQuery.data) {
     const next = encodeURIComponent(`${location.pathname}${location.search}`);
     return <Navigate to={`/auth?next=${next}`} replace />;
+  }
+
+  // If user is authenticated, check if they have access to any company
+  if (isAuthenticatedMode && sessionQuery.data) {
+    return <CompanyAccessGate />;
   }
 
   return <Outlet />;
@@ -112,10 +324,12 @@ function boardRoutes() {
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
+      <Route path="overall-dashboard" element={<OverallDashboard />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="company/team-members" element={<TeamMembers />} />
+      <Route path="members/:userId" element={<MemberDetail />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />

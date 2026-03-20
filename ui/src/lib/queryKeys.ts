@@ -46,9 +46,6 @@ export const queryKeys = {
   budgets: {
     overview: (companyId: string) => ["budgets", "overview", companyId] as const,
   },
-  teamMembers: {
-    list: (companyId: string) => ["team-members", companyId] as const,
-  },
   approvals: {
     list: (companyId: string, status?: string) =>
       ["approvals", companyId, status] as const,
@@ -57,6 +54,8 @@ export const queryKeys = {
     issues: (approvalId: string) => ["approvals", "issues", approvalId] as const,
   },
   access: {
+    members: (companyId: string) => ["access", "members", companyId] as const,
+    mySubordinates: (companyId: string) => ["access", "my-subordinates", companyId] as const,
     joinRequests: (companyId: string, status: string = "pending_approval") =>
       ["access", "join-requests", companyId, status] as const,
     invite: (token: string) => ["access", "invite", token] as const,

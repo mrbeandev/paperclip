@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project } from "@paperclipai/shared";
@@ -6,6 +6,9 @@ import { StatusBadge } from "./StatusBadge";
 import { cn, formatDate } from "../lib/utils";
 import { goalsApi } from "../api/goals";
 import { projectsApi } from "../api/projects";
+import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
@@ -957,6 +960,9 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
 
       </div>
 
+      {/* ── Member & Agent Assignments ── */}
+      <ProjectAssignments projectId={project.id} readOnly={!onArchive} />
+
       {onArchive && (
         <>
           <Separator className="my-4" />
@@ -996,5 +1002,167 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
         </>
       )}
     </div>
+  );
+}
+
+/* ── Project member/agent assignments ── */
+
+function ProjectAssignments({ projectId, readOnly = false }: { projectId: string; readOnly?: boolean }) {
+  const { selectedCompanyId } = useCompany();
+  const queryClient = useQueryClient();
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const { data: assignments } = useQuery({
+    queryKey: ["project-assignments", projectId],
+    queryFn: () => projectsApi.getAssignments(projectId, selectedCompanyId ?? undefined),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(selectedCompanyId!),
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  // For non-owners: fetch subordinates so they can only toggle their reports
+  const { data: subordinates } = useQuery({
+    queryKey: queryKeys.access.mySubordinates(selectedCompanyId!),
+    queryFn: () => accessApi.getMySubordinates(selectedCompanyId!),
+    enabled: !!selectedCompanyId && readOnly, // only fetch for non-owners
+  });
+
+  const assignedKeys = useMemo(
+    () => new Set((assignments ?? []).map((a) => a.principalKey)),
+    [assignments],
+  );
+
+  // Exclude owners — they always have access, no need to assign them
+  const humanMembers = useMemo(
+    () => (members ?? []).filter(
+      (m) => m.principalType === "user" && m.status === "active" && m.membershipRole !== "owner",
+    ),
+    [members],
+  );
+
+  const activeAgents = useMemo(
+    () => (agents ?? []).filter((a) => a.status !== "terminated"),
+    [agents],
+  );
+
+  // Determine which principals the current user can edit
+  const canEditKey = useCallback((key: string): boolean => {
+    if (!readOnly) return true; // owners can edit everything
+    if (!subordinates) return false;
+    if (subordinates.isTopLevel) return true; // top-level users can edit everything
+    const [type, id] = key.split(":");
+    if (type === "user") {
+      // Can edit yourself or your subordinates
+      if (id === session?.user?.id) return true;
+      return subordinates.userIds.includes(id!);
+    }
+    if (type === "agent") {
+      return subordinates.agentIds.includes(id!);
+    }
+    return false;
+  }, [readOnly, subordinates, session]);
+
+  const updateMutation = useMutation({
+    mutationFn: (keys: string[]) =>
+      projectsApi.updateAssignments(projectId, keys, selectedCompanyId ?? undefined),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-assignments", projectId] });
+    },
+  });
+
+  function togglePrincipal(key: string) {
+    const current = Array.from(assignedKeys);
+    const next = assignedKeys.has(key)
+      ? current.filter((k) => k !== key)
+      : [...current, key];
+    updateMutation.mutate(next);
+  }
+
+  return (
+    <>
+      <Separator className="my-4" />
+      <div className="space-y-3 py-4">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Access — Assigned Members & Agents
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {readOnly
+            ? "Members and agents assigned to this project."
+            : "Only assigned members can see this project and its issues. Owners always have access. If no one is assigned, all members can see the project."}
+        </p>
+
+        {humanMembers.length > 0 && (
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Members</p>
+            <div className="space-y-1">
+              {humanMembers.map((m) => {
+                const key = `user:${m.principalId}`;
+                const checked = assignedKeys.has(key);
+                return (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-primary shrink-0"
+                      checked={checked}
+                      disabled={!canEditKey(key) || updateMutation.isPending}
+                      onChange={() => togglePrincipal(key)}
+                    />
+                    <span className="text-sm">{m.userName ?? m.userEmail ?? "Unknown"}</span>
+                    {m.membershipRole === "owner" && (
+                      <span className="text-[10px] text-muted-foreground ml-1">(owner)</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeAgents.length > 0 && (
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Agents</p>
+            <div className="space-y-1">
+              {activeAgents.map((a) => {
+                const key = `agent:${a.id}`;
+                const checked = assignedKeys.has(key);
+                return (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-primary shrink-0"
+                      checked={checked}
+                      disabled={!canEditKey(key) || updateMutation.isPending}
+                      onChange={() => togglePrincipal(key)}
+                    />
+                    <span className="text-sm">{a.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

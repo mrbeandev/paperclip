@@ -1,5 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
+import { authUsers } from "@paperclipai/db";
 import {
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
@@ -119,7 +121,10 @@ export function companyRoutes(db: Db) {
       throw forbidden("Instance admin required");
     }
     const company = await svc.create(req.body);
-    await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    // Only create membership for real authenticated users, not the synthetic local-board actor
+    if (req.actor.userId && req.actor.userId !== "local-board") {
+      await access.ensureMembership(company.id, "user", req.actor.userId, "owner", "active");
+    }
     await logActivity(db, {
       companyId: company.id,
       actorType: "user",
@@ -194,6 +199,72 @@ export function companyRoutes(db: Db) {
       res.status(404).json({ error: "Company not found" });
       return;
     }
+    res.json({ ok: true });
+  });
+
+  // GET /api/companies/:companyId/transfer-targets
+  // Returns other board-level members of this company (only callable by the owner)
+  router.get("/:companyId/transfer-targets", async (req, res) => {
+    assertBoard(req);
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+
+    const currentUserId = req.actor.userId;
+    if (!currentUserId) throw forbidden("No user ID");
+
+    const membership = await access.getMembership(companyId, "user", currentUserId);
+    if (!membership || membership.membershipRole !== "owner") {
+      throw forbidden("Only the owner can view transfer targets");
+    }
+
+    const members = await access.listMembers(companyId);
+    const targets = await Promise.all(
+      members
+        .filter((m) => m.principalType === "user" && m.principalId !== currentUserId && m.status === "active")
+        .map(async (m) => {
+          const [user] = await db.select({ id: authUsers.id, name: authUsers.name, email: authUsers.email })
+            .from(authUsers)
+            .where(eq(authUsers.id, m.principalId))
+            .limit(1);
+          return user ? { id: user.id, name: user.name, email: user.email, membershipRole: m.membershipRole } : null;
+        }),
+    );
+    res.json(targets.filter(Boolean));
+  });
+
+  // POST /api/companies/:companyId/transfer-ownership
+  router.post("/:companyId/transfer-ownership", async (req, res) => {
+    assertBoard(req);
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+
+    const { targetUserId } = req.body as { targetUserId?: string };
+    if (!targetUserId) {
+      res.status(400).json({ error: { message: "targetUserId required" } });
+      return;
+    }
+
+    const currentUserId = req.actor.userId;
+    if (!currentUserId) throw forbidden("No user ID");
+    if (currentUserId === targetUserId) {
+      res.status(400).json({ error: { message: "Cannot transfer ownership to yourself" } });
+      return;
+    }
+
+    const myMembership = await access.getMembership(companyId, "user", currentUserId);
+    if (!myMembership || myMembership.membershipRole !== "owner") {
+      throw forbidden("Only the owner can transfer ownership");
+    }
+
+    const targetMembership = await access.getMembership(companyId, "user", targetUserId);
+    if (!targetMembership || targetMembership.status !== "active") {
+      res.status(400).json({ error: { message: "Target user is not an active member of this company" } });
+      return;
+    }
+
+    await access.ensureMembership(companyId, "user", targetUserId, "owner", "active");
+    await access.ensureMembership(companyId, "user", currentUserId, "member", "active");
+
     res.json({ ok: true });
   });
 

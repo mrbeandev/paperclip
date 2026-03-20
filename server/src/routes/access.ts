@@ -9,11 +9,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import type { Request } from "express";
-import { and, eq, isNull, desc } from "drizzle-orm";
+import { and, eq, inArray, isNull, desc } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agentApiKeys,
   authUsers,
+  instanceUserRoles,
   invites,
   joinRequests
 } from "@paperclipai/db";
@@ -112,6 +113,26 @@ function readSkillMarkdown(skillName: string): string | null {
   for (const skillPath of candidates) {
     try {
       return fs.readFileSync(skillPath, "utf8");
+    } catch {
+      // Continue to next candidate.
+    }
+  }
+  return null;
+}
+
+function readAgentTemplate(role: string, fileName: string): string | null {
+  const normalized = role.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const safeFile = fileName.trim().replace(/[^a-zA-Z0-9._-]/g, "");
+  if (!normalized || !safeFile) return null;
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "../../templates/default", normalized, safeFile),
+    path.resolve(process.cwd(), "templates/default", normalized, safeFile),
+    path.resolve(moduleDir, "../../../templates/default", normalized, safeFile),
+  ];
+  for (const p of candidates) {
+    try {
+      return fs.readFileSync(p, "utf8");
     } catch {
       // Continue to next candidate.
     }
@@ -1670,7 +1691,7 @@ export function accessRoutes(
       res.status(201).json({
         ...created,
         token,
-        inviteUrl: `/invite/${token}`,
+        inviteUrl: `${requestBaseUrl(req)}/invite/${token}`,
         onboardingTextPath: inviteSummary.onboardingTextPath,
         onboardingTextUrl: inviteSummary.onboardingTextUrl,
         inviteMessage: inviteSummary.inviteMessage
@@ -1715,7 +1736,7 @@ export function accessRoutes(
       res.status(201).json({
         ...created,
         token,
-        inviteUrl: `/invite/${token}`,
+        inviteUrl: `${requestBaseUrl(req)}/invite/${token}`,
         onboardingTextPath: inviteSummary.onboardingTextPath,
         onboardingTextUrl: inviteSummary.onboardingTextUrl,
         inviteMessage: inviteSummary.inviteMessage
@@ -2541,13 +2562,6 @@ export function accessRoutes(
     }
   );
 
-  router.get("/companies/:companyId/members", async (req, res) => {
-    const companyId = req.params.companyId as string;
-    await assertCompanyPermission(req, companyId, "users:manage_permissions");
-    const members = await access.listMembers(companyId);
-    res.json(members);
-  });
-
   router.patch(
     "/companies/:companyId/members/:memberId/permissions",
     validate(updateMemberPermissionsSchema),
@@ -2607,6 +2621,169 @@ export function accessRoutes(
       res.json(memberships);
     }
   );
+
+  // ── Bootstrap self-promotion (when no admin exists) ─────────────
+  router.post("/bootstrap/claim-admin", async (req, res) => {
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      throw unauthorized("Authenticated user required");
+    }
+    // Only allow when no instance admin exists
+    const isAdmin = await access.isInstanceAdmin(req.actor.userId);
+    if (isAdmin) {
+      res.json({ ok: true, alreadyAdmin: true });
+      return;
+    }
+    // Check that no admins exist at all
+    const existingAdmins = await db
+      .select({ id: instanceUserRoles.id })
+      .from(instanceUserRoles)
+      .where(eq(instanceUserRoles.role, "instance_admin"))
+      .then((rows) => rows.length);
+    if (existingAdmins > 0) {
+      throw forbidden("An instance admin already exists. Ask them to promote you.");
+    }
+    await access.promoteInstanceAdmin(req.actor.userId);
+    res.json({ ok: true, promoted: true });
+  });
+
+  // ── Unified members API ───────────────────────────────────────────
+
+  router.get("/companies/:companyId/members", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const members = await access.listMembers(companyId);
+    const userMembers = members.filter((m) => m.principalType === "user");
+    const userDetails = new Map<string, { name: string; email: string; image: string | null }>();
+    if (userMembers.length > 0) {
+      const userIds = userMembers.map((m) => m.principalId);
+      const rows = await db
+        .select({ id: authUsers.id, name: authUsers.name, email: authUsers.email, image: authUsers.image })
+        .from(authUsers)
+        .where(inArray(authUsers.id, userIds));
+      for (const row of rows) {
+        userDetails.set(row.id, { name: row.name, email: row.email, image: row.image });
+      }
+    }
+    const enriched = members.map((m) => {
+      if (m.principalType === "user") {
+        const details = userDetails.get(m.principalId);
+        return {
+          ...m,
+          userName: details?.name ?? null,
+          userEmail: details?.email ?? null,
+          userImage: details?.image ?? null,
+        };
+      }
+      return { ...m, userName: null, userEmail: null, userImage: null };
+    });
+    res.json(enriched);
+  });
+
+  router.get("/companies/:companyId/my-subordinates", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type !== "board" || !req.actor.userId) {
+      res.json({ userIds: [], agentIds: [], isTopLevel: false });
+      return;
+    }
+    const isAdmin = req.actor.isInstanceAdmin || req.actor.source === "local_implicit";
+    if (isAdmin) {
+      res.json({ userIds: [], agentIds: [], isTopLevel: true });
+      return;
+    }
+    const membership = await access.getMembership(companyId, "user", req.actor.userId);
+    const isTopLevel = !membership || (!membership.reportsToUserId && !membership.reportsToAgentId);
+    if (isTopLevel) {
+      res.json({ userIds: [], agentIds: [], isTopLevel: true });
+      return;
+    }
+    const subordinates = await access.getSubordinates(companyId, req.actor.userId);
+    res.json({ ...subordinates, isTopLevel: false });
+  });
+
+  router.patch("/companies/:companyId/members/:memberId/hierarchy", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const memberId = req.params.memberId as string;
+    assertCompanyAccess(req, companyId);
+    if (
+      req.actor.type === "board" &&
+      !req.actor.isInstanceAdmin &&
+      req.actor.source !== "local_implicit"
+    ) {
+      const allowed = await access.canUser(companyId, req.actor.userId, "users:manage_permissions");
+      if (!allowed) throw forbidden("Permission denied");
+    }
+    const { reportsToUserId, reportsToAgentId } = req.body as {
+      reportsToUserId?: string | null;
+      reportsToAgentId?: string | null;
+    };
+    const updated = await access.updateMemberHierarchy(
+      memberId,
+      reportsToUserId ?? null,
+      reportsToAgentId ?? null,
+    );
+    if (!updated) throw notFound("Member not found");
+    res.json(updated);
+  });
+
+  router.post("/companies/:companyId/invites/human", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCompanyPermission(req, companyId, "users:invite");
+    const { token, created } = await createCompanyInviteForCompany({
+      req,
+      companyId,
+      allowedJoinTypes: "human",
+      defaultsPayload: null,
+      agentMessage: null,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: "user",
+      actorId: req.actor.type === "board" ? (req.actor.userId ?? "board") : "unknown",
+      action: "invite.created",
+      entityType: "invite",
+      entityId: created.id,
+      details: {
+        inviteType: created.inviteType,
+        allowedJoinTypes: created.allowedJoinTypes,
+        expiresAt: created.expiresAt.toISOString(),
+      },
+    });
+
+    res.status(201).json({
+      id: created.id,
+      token,
+      inviteUrl: `${requestBaseUrl(req)}/invite/${token}`,
+      expiresAt: created.expiresAt.toISOString(),
+      allowedJoinTypes: created.allowedJoinTypes,
+    });
+  });
+
+  // ── Agent template files ──────────────────────────────────────────
+  router.get("/templates/:role/:fileName", (req, res) => {
+    const { role, fileName } = req.params as { role: string; fileName: string };
+    const content = readAgentTemplate(role, fileName);
+    if (!content) {
+      res.status(404).json({ error: "Template not found" });
+      return;
+    }
+    res.type("text/markdown").send(content);
+  });
+
+  router.get("/templates/:role", (req, res) => {
+    const role = (req.params.role as string).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!role) {
+      res.status(400).json({ error: "Invalid role" });
+      return;
+    }
+    const files = ["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"];
+    const result: Record<string, string | null> = {};
+    for (const f of files) {
+      result[f] = readAgentTemplate(role, f);
+    }
+    res.json(result);
+  });
 
   return router;
 }

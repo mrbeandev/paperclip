@@ -1,5 +1,7 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
+import { companies, companyMemberships } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
 import {
   createProjectSchema,
   createProjectWorkspaceSchema,
@@ -10,7 +12,7 @@ import {
 import { validate } from "../middleware/validate.js";
 import { projectService, logActivity } from "../services/index.js";
 import { conflict } from "../errors.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function projectRoutes(db: Db) {
   const router = Router();
@@ -55,7 +57,43 @@ export function projectRoutes(db: Db) {
   router.get("/companies/:companyId/projects", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const result = await svc.list(companyId);
+    let result = await svc.list(companyId);
+
+    // Scope projects for non-owner members based on projectAssignments in company metadata
+    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit") {
+      const membership = await db
+        .select({ membershipRole: companyMemberships.membershipRole })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.companyId, companyId),
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, req.actor.userId),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+
+      // Only scope if member is NOT an owner (owners see everything)
+      if (membership && membership.membershipRole !== "owner") {
+        const companyRow = await db
+          .select({ metadata: companies.metadata })
+          .from(companies)
+          .where(eq(companies.id, companyId))
+          .then((rows) => rows[0] ?? null);
+
+        const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+        const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;
+        const userKey = `user:${req.actor.userId}`;
+        const assignedProjectIds = assignments[userKey];
+
+        // If there are explicit project assignments for this user, filter
+        if (assignedProjectIds && assignedProjectIds.length > 0) {
+          const allowedSet = new Set(assignedProjectIds);
+          result = result.filter((p: any) => allowedSet.has(p.id));
+        }
+      }
+    }
+
     res.json(result);
   });
 
@@ -72,6 +110,7 @@ export function projectRoutes(db: Db) {
 
   router.post("/companies/:companyId/projects", validate(createProjectSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
+    assertBoard(req);
     assertCompanyAccess(req, companyId);
     type CreateProjectPayload = Parameters<typeof svc.create>[1] & {
       workspace?: Parameters<typeof svc.createWorkspace>[1];
@@ -284,6 +323,88 @@ export function projectRoutes(db: Db) {
     });
 
     res.json(project);
+  });
+
+  // ── Project member assignments ────────────────────────────────────
+
+  router.get("/projects/:id/assignments", async (req, res) => {
+    const id = req.params.id as string;
+    const project = await svc.getById(id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    assertCompanyAccess(req, project.companyId);
+
+    const companyRow = await db
+      .select({ metadata: companies.metadata })
+      .from(companies)
+      .where(eq(companies.id, project.companyId))
+      .then((rows) => rows[0] ?? null);
+    const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+    const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;
+
+    // Collect all principals assigned to this project
+    const assigned: Array<{ principalKey: string; principalType: "user" | "agent" }> = [];
+    for (const [key, projectIds] of Object.entries(assignments)) {
+      if (projectIds.includes(id)) {
+        const [type, ...rest] = key.split(":");
+        assigned.push({ principalKey: key, principalType: type as "user" | "agent" });
+      }
+    }
+    res.json(assigned);
+  });
+
+  router.put("/projects/:id/assignments", async (req, res) => {
+    const id = req.params.id as string;
+    const project = await svc.getById(id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    assertBoard(req);
+    assertCompanyAccess(req, project.companyId);
+
+    const { principalKeys } = req.body as { principalKeys: string[] };
+    if (!Array.isArray(principalKeys)) {
+      res.status(400).json({ error: "principalKeys must be an array" });
+      return;
+    }
+
+    // Read current assignments
+    const companyRow = await db
+      .select({ metadata: companies.metadata })
+      .from(companies)
+      .where(eq(companies.id, project.companyId))
+      .then((rows) => rows[0] ?? null);
+    const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+    const assignments = { ...((meta.projectAssignments ?? {}) as Record<string, string[]>) };
+
+    // Remove this project from all current assignments
+    for (const key of Object.keys(assignments)) {
+      assignments[key] = assignments[key].filter((pid) => pid !== id);
+      if (assignments[key].length === 0) delete assignments[key];
+    }
+
+    // Add this project to the specified principals
+    for (const key of principalKeys) {
+      if (!assignments[key]) assignments[key] = [];
+      if (!assignments[key].includes(id)) assignments[key].push(id);
+    }
+
+    // Save back to company metadata
+    await db
+      .update(companies)
+      .set({ metadata: { ...meta, projectAssignments: assignments } })
+      .where(eq(companies.id, project.companyId));
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: project.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      action: "project.assignments_updated",
+      entityType: "project",
+      entityId: id,
+      details: { principalKeys },
+    });
+
+    res.json({ ok: true, principalKeys });
   });
 
   return router;

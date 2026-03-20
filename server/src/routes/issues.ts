@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import type { Db } from "@paperclipai/db";
+import { companies, companyMemberships } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
@@ -28,7 +30,6 @@ import {
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
-import { expandAgentSubtrees } from "../services/agent-subtree.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 
@@ -222,7 +223,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
 
-    const result = await svc.list(companyId, {
+    let result = await svc.list(companyId, {
       status: req.query.status as string | undefined,
       assigneeAgentId: req.query.assigneeAgentId as string | undefined,
       assigneeUserId,
@@ -234,12 +235,46 @@ export function issueRoutes(db: Db, storage: StorageService) {
       q: req.query.q as string | undefined,
     });
 
-    // If this actor has team-scoped access, filter issues to those assigned to their visible agents
-    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
-    if (scopeRoots) {
-      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
-      res.json(result.filter((issue) => !issue.assigneeAgentId || subtree.has(issue.assigneeAgentId)));
-      return;
+    // If this actor has hierarchy-scoped access, filter issues to those assigned to visible agents
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
+      const visibleIds = await access.getVisibleAgentIds(companyId, req.actor.userId);
+      if (visibleIds) {
+        const allowed = new Set(visibleIds);
+        result = result.filter((issue) => !issue.assigneeAgentId || allowed.has(issue.assigneeAgentId));
+      }
+    }
+
+    // Scope issues by project assignment for non-owner members
+    if (req.actor.type === "board" && req.actor.userId && req.actor.source !== "local_implicit") {
+      const membership = await db
+        .select({ membershipRole: companyMemberships.membershipRole })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.companyId, companyId),
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, req.actor.userId),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+
+      if (membership && membership.membershipRole !== "owner") {
+        const companyRow = await db
+          .select({ metadata: companies.metadata })
+          .from(companies)
+          .where(eq(companies.id, companyId))
+          .then((rows) => rows[0] ?? null);
+
+        const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+        const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;
+        const userKey = `user:${req.actor.userId}`;
+        const assignedProjectIds = assignments[userKey];
+
+        if (assignedProjectIds && assignedProjectIds.length > 0) {
+          const allowedProjects = new Set(assignedProjectIds);
+          result = result.filter((issue) => !issue.projectId || allowedProjects.has(issue.projectId));
+        }
+      }
     }
 
     res.json(result);
@@ -655,11 +690,41 @@ export function issueRoutes(db: Db, storage: StorageService) {
       await assertCanAssignTasks(req, companyId);
     }
 
-    // Validate that the assigneeAgentId is within this actor's scope (if scoped)
-    const createScopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
-    if (createScopeRoots && req.body.assigneeAgentId) {
-      const subtree = await expandAgentSubtrees(db, createScopeRoots, companyId);
-      if (!subtree.has(req.body.assigneeAgentId as string)) {
+    // Validate project access for non-owner members
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
+      const membership = await db
+        .select({ membershipRole: companyMemberships.membershipRole })
+        .from(companyMemberships)
+        .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, req.actor.userId)))
+        .then((rows) => rows[0] ?? null);
+      if (membership && membership.membershipRole !== "owner") {
+        const companyRow = await db.select({ metadata: companies.metadata }).from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null);
+        const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+        const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;
+        const userKey = `user:${req.actor.userId}`;
+        const assignedProjectIds = assignments[userKey] ?? [];
+
+        if (assignedProjectIds.length === 0) {
+          // Member has no project assignments — cannot create issues
+          res.status(403).json({ error: "You have no project assignments. Ask your admin to assign you to a project." });
+          return;
+        }
+        if (req.body.projectId && !new Set(assignedProjectIds).has(req.body.projectId as string)) {
+          res.status(403).json({ error: "You do not have access to this project" });
+          return;
+        }
+        if (!req.body.projectId) {
+          // Member must specify a project
+          res.status(400).json({ error: "A project must be selected when creating issues" });
+          return;
+        }
+      }
+    }
+
+    // Validate that the assigneeAgentId is within this actor's visible scope
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.body.assigneeAgentId) {
+      const visibleIds = await access.getVisibleAgentIds(companyId, req.actor.userId);
+      if (visibleIds && !new Set(visibleIds).has(req.body.assigneeAgentId as string)) {
         res.status(403).json({ error: "Assignee agent is outside your accessible scope" });
         return;
       }
@@ -728,11 +793,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     }
 
-    // Validate the new assigneeAgentId is within this actor's scope (if scoped)
-    const patchScopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[existing.companyId] : undefined;
-    if (patchScopeRoots && req.body.assigneeAgentId) {
-      const subtree = await expandAgentSubtrees(db, patchScopeRoots, existing.companyId);
-      if (!subtree.has(req.body.assigneeAgentId as string)) {
+    // Validate the new assigneeAgentId is within this actor's visible scope
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.body.assigneeAgentId) {
+      const visibleIds = await access.getVisibleAgentIds(existing.companyId, req.actor.userId);
+      if (visibleIds && !new Set(visibleIds).has(req.body.assigneeAgentId as string)) {
         res.status(403).json({ error: "Assignee agent is outside your accessible scope" });
         return;
       }

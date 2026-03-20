@@ -75,7 +75,42 @@ type CompanyInviteCreated = {
   inviteMessage?: string | null;
 };
 
+export type CompanyMember = {
+  id: string;
+  companyId: string;
+  principalType: "user" | "agent";
+  principalId: string;
+  status: "pending" | "active" | "suspended";
+  membershipRole: string | null;
+  reportsToUserId: string | null;
+  reportsToAgentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userName: string | null;
+  userEmail: string | null;
+  userImage: string | null;
+};
+
 export const accessApi = {
+  claimBootstrapAdmin: () =>
+    api.post<{ ok: true; promoted?: true; alreadyAdmin?: true }>("/bootstrap/claim-admin", {}),
+
+  listCompanyMembers: (companyId: string) =>
+    api.get<CompanyMember[]>(`/companies/${companyId}/members`),
+
+  createHumanInvite: (companyId: string) =>
+    api.post<CompanyInviteCreated>(`/companies/${companyId}/invites/human`, {}),
+
+  updateMemberHierarchy: (
+    companyId: string,
+    memberId: string,
+    data: { reportsToUserId?: string | null; reportsToAgentId?: string | null },
+  ) => api.patch<CompanyMember>(`/companies/${companyId}/members/${memberId}/hierarchy`, data),
+
+  getMySubordinates: (companyId: string) =>
+    api.get<{ userIds: string[]; agentIds: string[]; isTopLevel: boolean }>(
+      `/companies/${companyId}/my-subordinates`,
+    ),
   createCompanyInvite: (
     companyId: string,
     input: {

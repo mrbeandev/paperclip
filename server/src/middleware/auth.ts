@@ -7,7 +7,6 @@ import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
-import { teamMemberService } from "../services/team-members.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -29,7 +28,10 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
-      if (opts.deploymentMode === "authenticated" && opts.resolveSession) {
+      // In both modes, try to resolve a real user session from cookies.
+      // In local_trusted: upgrades the actor from synthetic local-board to the real signed-in user.
+      // In authenticated: this is the primary auth path.
+      if (opts.resolveSession) {
         let session: BetterAuthSessionResult | null = null;
         try {
           session = await opts.resolveSession(req);
@@ -41,10 +43,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         }
         if (session?.user?.id) {
           const userId = session.user.id;
-          const email = session.user.email ?? "";
-          const teamSvc = teamMemberService(db);
 
-          const [roleRow, memberships, scopeRoots] = await Promise.all([
+          const [roleRow, memberships] = await Promise.all([
             db
               .select({ id: instanceUserRoles.id })
               .from(instanceUserRoles)
@@ -60,20 +60,11 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
                   eq(companyMemberships.status, "active"),
                 ),
               ),
-            // Activate any pending team grants for this email, then return scope roots
-            (async () => {
-              if (email) {
-                await teamSvc.activateGrantsForUser(userId, email);
-              }
-              return teamSvc.getScopeRootsForUser(userId);
-            })(),
           ]);
 
-          const isInstanceAdmin = Boolean(roleRow);
-          // Collect all companies: from traditional memberships + from team grants
-          const membershipCompanyIds = memberships.map((row) => row.companyId);
-          const teamGrantCompanyIds = Object.keys(scopeRoots);
-          const allCompanyIds = [...new Set([...membershipCompanyIds, ...teamGrantCompanyIds])];
+          // In local_trusted mode, the real user always gets instance_admin (same as the board)
+          const isInstanceAdmin = opts.deploymentMode === "local_trusted" ? true : Boolean(roleRow);
+          const allCompanyIds = memberships.map((row) => row.companyId);
 
           req.actor = {
             type: "board",
@@ -82,8 +73,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
             isInstanceAdmin,
             runId: runIdHeader ?? undefined,
             source: "session",
-            // Only attach scope roots for non-admins who have team grants
-            agentScopeRoots: !isInstanceAdmin && teamGrantCompanyIds.length > 0 ? scopeRoots : undefined,
+            userName: session.user.name ?? null,
+            userEmail: session.user.email ?? null,
           };
           next();
           return;

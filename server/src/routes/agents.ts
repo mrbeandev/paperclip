@@ -32,7 +32,6 @@ import {
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { expandAgentSubtrees } from "../services/agent-subtree.js";
 import { findServerAdapter, listAdapterModels } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -467,11 +466,13 @@ export function agentRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     let result = await svc.list(companyId);
 
-    // If this actor has team-scoped access, filter to their visible subtree only
-    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
-    if (scopeRoots) {
-      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
-      result = result.filter((agent) => subtree.has(agent.id));
+    // If this actor has hierarchy-scoped access, filter to visible agents
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
+      const visibleIds = await access.getVisibleAgentIds(companyId, req.actor.userId);
+      if (visibleIds) {
+        const allowed = new Set(visibleIds);
+        result = result.filter((agent) => allowed.has(agent.id));
+      }
     }
 
     const canReadConfigs = await actorCanReadConfigurationsForCompany(req, companyId);
@@ -563,11 +564,39 @@ export function agentRoutes(db: Db) {
     const tree = await svc.orgForCompany(companyId);
     let leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
 
-    // If this actor has team-scoped access, filter org tree to their visible subtree
-    const scopeRoots = req.actor.type === "board" ? req.actor.agentScopeRoots?.[companyId] : undefined;
-    if (scopeRoots) {
-      const subtree = await expandAgentSubtrees(db, scopeRoots, companyId);
-      leanTree = leanTree.filter((node) => subtree.has(String(node["id"])));
+    // If this actor has hierarchy-scoped access, rebuild the org tree from only their visible agents
+    const scopeIds = (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit")
+      ? await access.getVisibleAgentIds(companyId, req.actor.userId)
+      : null;
+    if (scopeIds && scopeIds.length > 0) {
+      const allowed = new Set(scopeIds);
+      // Flatten full tree, tracking each node's parent
+      const nodeMap = new Map<string, { lean: Record<string, unknown>; parentId: string | null }>();
+      const flattenWithParent = (nodes: Record<string, unknown>[], parentId: string | null) => {
+        for (const node of nodes) {
+          nodeMap.set(String(node["id"]), { lean: node, parentId });
+          flattenWithParent(node["reports"] as Record<string, unknown>[], String(node["id"]));
+        }
+      };
+      flattenWithParent(leanTree, null);
+      // Build a filtered node with only allowed children
+      const buildNode = (id: string): Record<string, unknown> | null => {
+        const entry = nodeMap.get(id);
+        if (!entry) return null;
+        const children = [...nodeMap.values()]
+          .filter((e) => e.parentId === id && allowed.has(String(e.lean["id"])))
+          .map((e) => buildNode(String(e.lean["id"])))
+          .filter((n): n is Record<string, unknown> => n !== null);
+        return { ...entry.lean, reports: children };
+      };
+      // Roots: allowed agents whose parent is absent or not in allowed
+      leanTree = scopeIds
+        .filter((id) => {
+          const entry = nodeMap.get(id);
+          return entry && (entry.parentId === null || !allowed.has(entry.parentId));
+        })
+        .map((id) => buildNode(id))
+        .filter((n): n is Record<string, unknown> => n !== null);
     }
 
     res.json(leanTree);
@@ -939,8 +968,18 @@ export function agentRoutes(db: Db) {
       normalizedAdapterConfig,
     );
 
+    // If a human user creates an agent with no reporting relationship set,
+    // automatically set the agent to report to that user (unless it's the synthetic local-board).
+    // NOTE: reportsToUserId is set server-side here (not from req.body) because the validated
+    // body may strip it if the running schema hasn't been reloaded.
+    let effectiveReportsToUserId: string | null = req.body.reportsToUserId ?? null;
+    if (!effectiveReportsToUserId && !req.body.reportsTo && req.actor.type === "board" && req.actor.userId && req.actor.userId !== "local-board") {
+      effectiveReportsToUserId = req.actor.userId;
+    }
+
     const agent = await svc.create(companyId, {
       ...req.body,
+      reportsToUserId: effectiveReportsToUserId,
       adapterConfig: normalizedAdapterConfig,
       status: "idle",
       spentMonthlyCents: 0,

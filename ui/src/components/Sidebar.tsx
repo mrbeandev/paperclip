@@ -3,14 +3,18 @@ import {
   CircleDot,
   Target,
   LayoutDashboard,
+  BarChart3,
   DollarSign,
   History,
   Search,
   SquarePen,
   Network,
   Settings,
+  Users,
+  LogOut,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarProjects } from "./SidebarProjects";
@@ -18,15 +22,36 @@ import { SidebarAgents } from "./SidebarAgents";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
+import { authApi } from "../api/auth";
+import { accessApi } from "../api/access";
 import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { useNavigate } from "@/lib/router";
 
 export function Sidebar() {
   const { openNewIssue } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
   const inboxBadge = useInboxBadge(selectedCompanyId);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+  const currentUser = session?.user;
+
+  const signOutMutation = useMutation({
+    mutationFn: () => authApi.signOut(),
+    onSuccess: () => {
+      queryClient.clear();
+      navigate("/auth", { replace: true });
+    },
+  });
+
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedCompanyId!),
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
@@ -34,6 +59,34 @@ export function Sidebar() {
     refetchInterval: 10_000,
   });
   const liveRunCount = liveRuns?.length ?? 0;
+
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const myMembership = useMemo(() => {
+    if (!currentUser || !members) return null;
+    return members.find(
+      (m) => m.principalType === "user" && m.principalId === currentUser.id,
+    ) ?? null;
+  }, [currentUser, members]);
+
+  const isOwner = myMembership?.membershipRole === "owner";
+
+  // Check if member has any hierarchy assignment (reports to someone or has reports)
+  const hasHierarchyAssignment = useMemo(() => {
+    if (isOwner || !currentUser || !members) return true;
+    const me = myMembership;
+    if (!me) return false;
+    // Has a parent
+    if (me.reportsToUserId || me.reportsToAgentId) return true;
+    // Has subordinates
+    return members.some(
+      (m) => m.reportsToUserId === currentUser.id,
+    );
+  }, [isOwner, currentUser, members, myMembership]);
 
   function openSearch() {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
@@ -69,7 +122,7 @@ export function Sidebar() {
 
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide flex flex-col gap-4 px-3 py-2">
         <div className="flex flex-col gap-0.5">
-          {/* New Issue button aligned with nav items */}
+          {/* New Issue button — shown for owners and members with project access */}
           <button
             onClick={() => openNewIssue()}
             className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
@@ -78,6 +131,7 @@ export function Sidebar() {
             <span className="truncate">New Issue</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          {isOwner && <SidebarNavItem to="/overall-dashboard" label="Overview" icon={BarChart3} />}
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
@@ -97,17 +151,18 @@ export function Sidebar() {
 
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
-          <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+          {isOwner && <SidebarNavItem to="/goals" label="Goals" icon={Target} />}
         </SidebarSection>
 
         <SidebarProjects />
 
-        <SidebarAgents />
+        <SidebarAgents isOwner={isOwner} />
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />
-          <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
-          <SidebarNavItem to="/activity" label="Activity" icon={History} />
+          {isOwner && <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />}
+          {isOwner && <SidebarNavItem to="/activity" label="Activity" icon={History} />}
+          {isOwner && <SidebarNavItem to="/company/team-members" label="Team Members" icon={Users} />}
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>
 
@@ -119,6 +174,35 @@ export function Sidebar() {
           missingBehavior="placeholder"
         />
       </nav>
+
+      {/* User footer */}
+      {currentUser && (
+        <div className="shrink-0 border-t border-border px-3 py-2 flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[11px] font-semibold text-muted-foreground shrink-0 uppercase">
+            {(currentUser.name ?? currentUser.email ?? "?").charAt(0)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-medium text-foreground truncate leading-tight">
+              {currentUser.name ?? currentUser.email}
+            </p>
+            {currentUser.name && (
+              <p className="text-[11px] text-muted-foreground truncate leading-tight">
+                {currentUser.email}
+              </p>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground shrink-0"
+            title="Sign out"
+            disabled={signOutMutation.isPending}
+            onClick={() => signOutMutation.mutate()}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
     </aside>
   );
 }

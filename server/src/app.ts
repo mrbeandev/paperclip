@@ -24,7 +24,6 @@ import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
-import { teamMemberRoutes } from "./routes/team-members.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { applyUiBranding } from "./ui-branding.js";
@@ -105,8 +104,8 @@ export async function createApp(
       },
       user: {
         id: req.actor.userId,
-        email: null,
-        name: req.actor.source === "local_implicit" ? "Local Board" : null,
+        email: req.actor.userEmail ?? null,
+        name: req.actor.source === "local_implicit" ? "Local Board" : (req.actor.userName ?? null),
       },
     });
   });
@@ -128,7 +127,7 @@ export async function createApp(
     }),
   );
   api.use("/companies", companyRoutes(db));
-  api.use("/companies/:companyId/team-members", teamMemberRoutes(db));
+  // Legacy team-members routes removed — use unified /companies/:companyId/members instead
   api.use(agentRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
@@ -228,9 +227,10 @@ export async function createApp(
     ];
     const uiDist = candidates.find((p) => fs.existsSync(path.join(p, "index.html")));
     if (uiDist) {
-      const indexHtml = applyUiBranding(fs.readFileSync(path.join(uiDist, "index.html"), "utf-8"));
       app.use(express.static(uiDist));
+      const uiDistResolved = uiDist;
       app.get(/.*/, (_req, res) => {
+        const indexHtml = applyUiBranding(fs.readFileSync(path.join(uiDistResolved, "index.html"), "utf-8"));
         res.status(200).set("Content-Type", "text/html").end(indexHtml);
       });
     } else {

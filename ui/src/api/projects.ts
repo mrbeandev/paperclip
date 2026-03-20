@@ -30,4 +30,13 @@ export const projectsApi = {
   removeWorkspace: (projectId: string, workspaceId: string, companyId?: string) =>
     api.delete<ProjectWorkspace>(projectPath(projectId, companyId, `/workspaces/${encodeURIComponent(workspaceId)}`)),
   remove: (id: string, companyId?: string) => api.delete<Project>(projectPath(id, companyId)),
+  getAssignments: (projectId: string, companyId?: string) =>
+    api.get<Array<{ principalKey: string; principalType: "user" | "agent" }>>(
+      projectPath(projectId, companyId, "/assignments"),
+    ),
+  updateAssignments: (projectId: string, principalKeys: string[], companyId?: string) =>
+    api.put<{ ok: true; principalKeys: string[] }>(
+      projectPath(projectId, companyId, "/assignments"),
+      { principalKeys },
+    ),
 };

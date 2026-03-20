@@ -17,6 +17,8 @@ export interface CompanyMembership {
   principalId: string;
   status: MembershipStatus;
   membershipRole: string | null;
+  reportsToUserId: string | null;
+  reportsToAgentId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
