@@ -166,7 +166,12 @@ export function projectRoutes(db: Db) {
       return;
     }
     await assertPermission(req, existing.companyId, "projects:update");
-    const project = await svc.update(id, req.body);
+    // Parse archivedAt string to Date for Drizzle timestamp column
+    const body = { ...req.body };
+    if (body.archivedAt && typeof body.archivedAt === "string") {
+      body.archivedAt = new Date(body.archivedAt);
+    }
+    const project = await svc.update(id, body);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
