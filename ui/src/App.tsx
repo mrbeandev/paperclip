@@ -319,6 +319,34 @@ function CloudAccessGate() {
   return <Outlet />;
 }
 
+function InstanceAdminOnly({ children }: { children: React.ReactNode }) {
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+  const { data: isAdmin, isLoading } = useQuery({
+    queryKey: ["admin-check", session?.user?.id],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/admin/users/${session!.user.id}/company-access`, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    enabled: !!session?.user,
+    retry: false,
+  });
+
+  if (isLoading || !session) return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function OwnerOnly({ children }: { children: React.ReactNode }) {
   const { selectedCompanyId } = useCompany();
   const { data: session } = useQuery({
@@ -350,7 +378,7 @@ function boardRoutes() {
       <Route path="overall-dashboard" element={<OwnerOnly><OverallDashboard /></OwnerOnly>} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
-      <Route path="company/settings" element={<CompanySettings />} />
+      <Route path="company/settings" element={<OwnerOnly><CompanySettings /></OwnerOnly>} />
       <Route path="company/team-members" element={<OwnerOnly><TeamMembers /></OwnerOnly>} />
       <Route path="members/:userId" element={<MemberDetail />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
@@ -541,7 +569,7 @@ export function App() {
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
           <Route path="instance" element={<Navigate to="/instance/settings/heartbeats" replace />} />
-          <Route path="instance/settings" element={<Layout />}>
+          <Route path="instance/settings" element={<InstanceAdminOnly><Layout /></InstanceAdminOnly>}>
             <Route index element={<Navigate to="heartbeats" replace />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="plugins" element={<PluginManager />} />

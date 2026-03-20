@@ -317,7 +317,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
         if (assignedProjectIds && assignedProjectIds.length > 0) {
           const allowedProjects = new Set(assignedProjectIds);
-          result = result.filter((issue) => !issue.projectId || allowedProjects.has(issue.projectId));
+          // Members only see issues in their assigned projects (no unscoped issues)
+          result = result.filter((issue) => issue.projectId && allowedProjects.has(issue.projectId));
+        } else {
+          // Member has no project assignments — see no issues
+          result = [];
         }
       }
     }
@@ -387,6 +391,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    await assertIssueProjectAccess(req, issue);
     const [ancestors, project, goal, mentionedProjectIds, documentPayload] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,

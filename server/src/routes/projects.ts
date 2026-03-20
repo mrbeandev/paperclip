@@ -86,10 +86,13 @@ export function projectRoutes(db: Db) {
         const userKey = `user:${req.actor.userId}`;
         const assignedProjectIds = assignments[userKey];
 
-        // If there are explicit project assignments for this user, filter
+        // Members only see projects explicitly assigned to them
         if (assignedProjectIds && assignedProjectIds.length > 0) {
           const allowedSet = new Set(assignedProjectIds);
           result = result.filter((p: any) => allowedSet.has(p.id));
+        } else {
+          // No project assignments — see no projects
+          result = [];
         }
       }
     }

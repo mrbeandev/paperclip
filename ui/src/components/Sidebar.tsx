@@ -175,7 +175,7 @@ export function Sidebar() {
           {isOwner && <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />}
           {isOwner && <SidebarNavItem to="/activity" label="Activity" icon={History} />}
           {isOwner && <SidebarNavItem to="/company/team-members" label="Team Members" icon={Users} />}
-          <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+          {isOwner && <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />}
         </SidebarSection>
 
         <PluginSlotOutlet

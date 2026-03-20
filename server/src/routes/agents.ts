@@ -1503,7 +1503,15 @@ export function agentRoutes(db: Db) {
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 200)) : undefined;
-    const runs = await heartbeat.list(companyId, agentId, limit);
+    let runs = await heartbeat.list(companyId, agentId, limit);
+    // Scope runs for non-owner members
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
+      const visibleIds = await access.getVisibleAgentIds(companyId, req.actor.userId);
+      if (visibleIds) {
+        const allowed = new Set(visibleIds);
+        runs = runs.filter((r: any) => allowed.has(r.agentId));
+      }
+    }
     res.json(runs);
   });
 
@@ -1571,6 +1579,14 @@ export function agentRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, run.companyId);
+    // Scope for non-owner members
+    if (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit") {
+      const visibleIds = await access.getVisibleAgentIds(run.companyId, req.actor.userId);
+      if (visibleIds && !visibleIds.includes((run as any).agentId)) {
+        res.status(403).json({ error: "You do not have access to this agent's runs" });
+        return;
+      }
+    }
     res.json(redactCurrentUserValue(run));
   });
 
