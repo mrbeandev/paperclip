@@ -1,7 +1,8 @@
 # Roles & Permissions System — Implementation Plan
 
-> Status: APPROVED — ready for implementation
+> Status: IMPLEMENTED — all phases complete
 > Created: 2026-03-20
+> Completed: 2026-03-20
 > Author: Claude + tulasinath
 
 ---
@@ -364,3 +365,41 @@ After implementation, verify:
 - `ui/src/pages/TeamMembers.tsx`
 - `ui/src/pages/MemberDetail.tsx`
 - `ui/src/pages/CompanySettings.tsx`
+
+---
+
+## Deviations from Original Plan
+
+### Changes made during implementation:
+
+1. **Employee role does NOT get `agents:create`** — Original plan gave employees `agents:create`. Changed per user request: only managers and admins can create agents.
+
+2. **Role management UI in CompanySettings, not a separate page** — Plan suggested `/:companyPrefix/company/roles` as a dedicated page. Instead, added a "Roles & Permissions" section directly in Company Settings (gated behind `users:manage_permissions`). This is simpler and keeps all company config in one place.
+
+3. **`assertOwner` kept as backward-compatible wrapper** — Plan said to deprecate `assertOwner`. It's still in `authz.ts` as a fallback that accepts both `"admin"` and `"owner"` membershipRole values. This prevents breakage during the migration period where existing DB rows may still have `"owner"`.
+
+4. **`CompanyAccessGate` still uses membershipRole check** — The "waiting for assignment" screen in `App.tsx` still checks `membershipRole !== "admin" && membershipRole !== "owner"` directly rather than using `hasRolePermission`. This is intentional because the gate runs BEFORE the company context is fully loaded, and `useMyPermissions` requires a selected company.
+
+5. **Dashboard uses `isFullAccess` naming** — Instead of `isOwner`, Dashboard.tsx uses `const isFullAccess = hasDashPerm("dashboard:view_full")` which better reflects the permission-based nature.
+
+6. **Server scoping checks migrated to `hasRolePermission`** — The project/issue list filtering checks in `projects.ts`, `issues.ts`, and `assertIssueProjectAccess` were updated from `membershipRole !== "owner"` to `hasRolePermission(companyId, "user", userId, "dashboard:view_full")`. This means managers with `dashboard:view_full` see all projects/issues (same as admins), while employees only see their assigned ones.
+
+7. **`accessService` added to `projects.ts`** — Not in original plan. Needed because project scoping now calls `access.hasRolePermission` instead of querying `companyMemberships` directly.
+
+8. **Transfer ownership transfers role assignment** — Not just `membershipRole` text, but also sets `roleId` to the admin/employee role FK. Original plan mentioned this conceptually but the implementation explicitly fetches and assigns role IDs.
+
+9. **`my-permissions` returns ALL permission keys for instance admins and local_implicit** — Shortcut: instead of looking up their role, these superusers get the full `PERMISSION_KEYS` array.
+
+10. **Permission constants exported from shared** — Added `ADMIN_PERMISSIONS`, `MANAGER_PERMISSIONS`, `EMPLOYEE_PERMISSIONS` as typed arrays in `constants.ts` for use in `seedDefaultRoles`. The plan only mentioned the role definitions in the migration SQL.
+
+11. **Role editor has grouped permissions with indeterminate checkbox** — The plan mentioned a "checkbox grid". Implementation uses collapsible permission groups (Company, Agents, Projects, etc.) with group-level toggle that shows indeterminate state when partially selected.
+
+---
+
+## Commits
+
+1. `e134d2c` — Phase 1-3: schema, migration, service
+2. `5b65aac` — Phase 4-5B: route migration, API, UI hook
+3. `f9b9170` — Phase 5C: replace all isOwner with hasPermission (13 files, -169 lines)
+4. `72002e6` — Phase 6: bootstrap, owner→admin, remaining membershipRole fixes
+5. `0ae1b50` — Phase 5D: Role Management UI
