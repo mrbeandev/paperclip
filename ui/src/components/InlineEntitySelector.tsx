@@ -51,7 +51,9 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     const isPointerDownRef = useRef(false);
 
     const allOptions = useMemo<InlineEntityOption[]>(
-      () => [{ id: "", label: noneLabel, searchText: noneLabel }, ...options],
+      () => noneLabel
+        ? [{ id: "", label: noneLabel, searchText: noneLabel }, ...options]
+        : options,
       [noneLabel, options],
     );
 

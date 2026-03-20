@@ -6,6 +6,7 @@ import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
+import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
@@ -288,10 +289,30 @@ export function NewIssueDialog() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+
+  const { data: issueMembers } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const isIssueOwner = useMemo(() => {
+    if (!currentUserId || !issueMembers) return true; // default allow while loading
+    const me = issueMembers.find((m) => m.principalType === "user" && m.principalId === currentUserId);
+    return me?.membershipRole === "owner";
+  }, [currentUserId, issueMembers]);
+
   const activeProjects = useMemo(
     () => (projects ?? []).filter((p) => !p.archivedAt),
     [projects],
   );
+
+  // For members: auto-select the first project if none is set
+  useEffect(() => {
+    if (!isIssueOwner && !projectId && activeProjects.length > 0) {
+      setProjectId(activeProjects[0].id);
+    }
+  }, [isIssueOwner, projectId, activeProjects]);
   const { orderedProjects } = useProjectOrder({
     projects: activeProjects,
     companyId: effectiveCompanyId,
@@ -969,7 +990,7 @@ export function NewIssueDialog() {
                 options={projectOptions}
                 placeholder="Project"
                 disablePortal
-                noneLabel="No project"
+                noneLabel={isIssueOwner ? "No project" : ""}
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
                 onChange={handleProjectChange}

@@ -9,6 +9,7 @@ import { httpLogger, errorHandler } from "./middleware/index.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
+import { setAuthzDb } from "./routes/authz.js";
 import { healthRoutes } from "./routes/health.js";
 import { companyRoutes } from "./routes/companies.js";
 import { agentRoutes } from "./routes/agents.js";
@@ -126,6 +127,7 @@ export async function createApp(
       companyDeletionEnabled: opts.companyDeletionEnabled,
     }),
   );
+  setAuthzDb(db);
   api.use("/companies", companyRoutes(db));
   // Legacy team-members routes removed — use unified /companies/:companyId/members instead
   api.use(agentRoutes(db));

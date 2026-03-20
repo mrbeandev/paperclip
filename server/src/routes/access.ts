@@ -2692,12 +2692,16 @@ export function accessRoutes(
       return;
     }
     const membership = await access.getMembership(companyId, "user", req.actor.userId);
-    const isTopLevel = !membership || (!membership.reportsToUserId && !membership.reportsToAgentId);
-    if (isTopLevel) {
+    const hasNoParent = !membership || (!membership.reportsToUserId && !membership.reportsToAgentId);
+    // Only owners with no parent are truly top-level
+    if (hasNoParent && membership?.membershipRole === "owner") {
       res.json({ userIds: [], agentIds: [], isTopLevel: true });
       return;
     }
-    const subordinates = await access.getSubordinates(companyId, req.actor.userId);
+    // Non-owner members with no hierarchy get their subordinates (likely empty)
+    const subordinates = membership
+      ? await access.getSubordinates(companyId, req.actor.userId)
+      : { userIds: [], agentIds: [] };
     res.json({ ...subordinates, isTopLevel: false });
   });
 

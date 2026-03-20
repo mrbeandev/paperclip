@@ -7,6 +7,8 @@ import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
+import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -40,11 +42,45 @@ export function Dashboard() {
   const hydratedActivityRef = useRef(false);
   const activityAnimationTimersRef = useRef<number[]>([]);
 
-  const { data: agents } = useQuery({
+  const { data: allAgents } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: subordinates } = useQuery({
+    queryKey: queryKeys.access.mySubordinates(selectedCompanyId!),
+    queryFn: () => accessApi.getMySubordinates(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const isOwner = useMemo(() => {
+    if (!session?.user || !members) return true; // default allow while loading
+    const me = members.find((m) => m.principalType === "user" && m.principalId === session.user.id);
+    return me?.membershipRole === "owner";
+  }, [session, members]);
+
+  // For members: filter agents to only visible ones (subordinates)
+  const agents = useMemo(() => {
+    if (!allAgents) return undefined;
+    if (isOwner) return allAgents;
+    if (!subordinates) return allAgents;
+    if (subordinates.isTopLevel) return allAgents;
+    const allowed = new Set(subordinates.agentIds);
+    return allAgents.filter((a) => allowed.has(a.id));
+  }, [allAgents, isOwner, subordinates]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Dashboard" }]);
@@ -81,7 +117,21 @@ export function Dashboard() {
   });
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
-  const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
+
+  // For members: filter activity to their own actions + their agents' actions
+  const recentActivity = useMemo(() => {
+    const all = activity ?? [];
+    if (isOwner || !subordinates || subordinates.isTopLevel) return all.slice(0, 10);
+    const allowedAgents = new Set(subordinates.agentIds);
+    const userId = session?.user?.id;
+    return all
+      .filter((e) => {
+        if (e.actorType === "user" && e.actorId === userId) return true;
+        if (e.actorType === "agent" && e.agentId && allowedAgents.has(e.agentId)) return true;
+        return false;
+      })
+      .slice(0, 10);
+  }, [activity, isOwner, subordinates, session]);
 
   useEffect(() => {
     for (const timer of activityAnimationTimersRef.current) {
@@ -206,11 +256,35 @@ export function Dashboard() {
         </div>
       )}
 
-      <ActiveAgentsPanel companyId={selectedCompanyId!} />
+      <ActiveAgentsPanel
+        companyId={selectedCompanyId!}
+        visibleAgentIds={
+          !isOwner && subordinates && !subordinates.isTopLevel
+            ? new Set(subordinates.agentIds)
+            : null
+        }
+      />
 
-      {data && (
-        <>
-          {data.budgets.activeIncidents > 0 ? (
+      {data && (() => {
+        // For members: compute scoped metrics from filtered agents/issues
+        const scopedAgentCount = agents?.length ?? 0;
+        const scopedRunning = agents?.filter((a) => a.status === "running").length ?? 0;
+        const scopedPaused = agents?.filter((a) => a.status === "paused").length ?? 0;
+        const scopedErrors = agents?.filter((a) => a.status === "error").length ?? 0;
+        const scopedInProgress = (issues ?? []).filter((i: any) => i.status === "in_progress" || i.status === "todo").length;
+        const scopedOpen = (issues ?? []).filter((i: any) => i.status !== "done" && i.status !== "cancelled").length;
+        const scopedBlocked = (issues ?? []).filter((i: any) => i.status === "blocked").length;
+
+        const agentTotal = isOwner ? (data.agents.active + data.agents.running + data.agents.paused + data.agents.error) : scopedAgentCount;
+        const agentRunning = isOwner ? data.agents.running : scopedRunning;
+        const agentPaused = isOwner ? data.agents.paused : scopedPaused;
+        const agentErrors = isOwner ? data.agents.error : scopedErrors;
+        const tasksInProgress = isOwner ? data.tasks.inProgress : scopedInProgress;
+        const tasksOpen = isOwner ? data.tasks.open : scopedOpen;
+        const tasksBlocked = isOwner ? data.tasks.blocked : scopedBlocked;
+
+        return <>
+          {isOwner && data.budgets.activeIncidents > 0 ? (
             <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(255,80,80,0.12),rgba(255,255,255,0.02))] px-4 py-3">
               <div className="flex items-start gap-2.5">
                 <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
@@ -232,55 +306,59 @@ export function Dashboard() {
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-1 sm:gap-2">
             <MetricCard
               icon={Bot}
-              value={data.agents.active + data.agents.running + data.agents.paused + data.agents.error}
+              value={agentTotal}
               label="Agents Enabled"
               to="/agents"
               description={
                 <span>
-                  {data.agents.running} running{", "}
-                  {data.agents.paused} paused{", "}
-                  {data.agents.error} errors
+                  {agentRunning} running{", "}
+                  {agentPaused} paused{", "}
+                  {agentErrors} errors
                 </span>
               }
             />
             <MetricCard
               icon={CircleDot}
-              value={data.tasks.inProgress}
+              value={tasksInProgress}
               label="Tasks In Progress"
               to="/issues"
               description={
                 <span>
-                  {data.tasks.open} open{", "}
-                  {data.tasks.blocked} blocked
+                  {tasksOpen} open{", "}
+                  {tasksBlocked} blocked
                 </span>
               }
             />
-            <MetricCard
-              icon={DollarSign}
-              value={formatCents(data.costs.monthSpendCents)}
-              label="Month Spend"
-              to="/costs"
-              description={
-                <span>
-                  {data.costs.monthBudgetCents > 0
-                    ? `${data.costs.monthUtilizationPercent}% of ${formatCents(data.costs.monthBudgetCents)} budget`
-                    : "Unlimited budget"}
-                </span>
-              }
-            />
-            <MetricCard
-              icon={ShieldCheck}
-              value={data.pendingApprovals + data.budgets.pendingApprovals}
-              label="Pending Approvals"
-              to="/approvals"
-              description={
-                <span>
-                  {data.budgets.pendingApprovals > 0
-                    ? `${data.budgets.pendingApprovals} budget overrides awaiting board review`
-                    : "Awaiting board review"}
-                </span>
-              }
-            />
+            {isOwner && (
+              <MetricCard
+                icon={DollarSign}
+                value={formatCents(data.costs.monthSpendCents)}
+                label="Month Spend"
+                to="/costs"
+                description={
+                  <span>
+                    {data.costs.monthBudgetCents > 0
+                      ? `${data.costs.monthUtilizationPercent}% of ${formatCents(data.costs.monthBudgetCents)} budget`
+                      : "Unlimited budget"}
+                  </span>
+                }
+              />
+            )}
+            {isOwner && (
+              <MetricCard
+                icon={ShieldCheck}
+                value={data.pendingApprovals + data.budgets.pendingApprovals}
+                label="Pending Approvals"
+                to="/approvals"
+                description={
+                  <span>
+                    {data.budgets.pendingApprovals > 0
+                      ? `${data.budgets.pendingApprovals} budget overrides awaiting board review`
+                      : "Awaiting board review"}
+                  </span>
+                }
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -381,8 +459,8 @@ export function Dashboard() {
             </div>
           </div>
 
-        </>
-      )}
+        </>;
+      })()}
     </div>
   );
 }

@@ -94,7 +94,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (req.actor.type === "board") {
       if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return;
       const allowed = await access.canUser(companyId, req.actor.userId, "tasks:assign");
-      if (!allowed) throw forbidden("Missing permission: tasks:assign");
+      if (allowed) return;
+      // Members can assign tasks to their subordinate agents without explicit permission
+      if (req.actor.userId) {
+        const visibleIds = await access.getVisibleAgentIds(companyId, req.actor.userId);
+        if (visibleIds === null) return; // top-level → can assign to anyone
+        const assigneeAgentId = req.body?.assigneeAgentId;
+        if (assigneeAgentId && visibleIds.includes(assigneeAgentId)) return;
+        const assigneeUserId = req.body?.assigneeUserId;
+        if (assigneeUserId === req.actor.userId) return;
+      }
+      throw forbidden("Missing permission: tasks:assign");
       return;
     }
     if (req.actor.type === "agent") {
@@ -103,9 +113,44 @@ export function issueRoutes(db: Db, storage: StorageService) {
       if (allowedByGrant) return;
       const actorAgent = await agentsSvc.getById(req.actor.agentId);
       if (actorAgent && actorAgent.companyId === companyId && canCreateAgentsLegacy(actorAgent)) return;
+      // Allow agents to assign tasks to agents in their subtree (subordinates)
+      if (actorAgent && actorAgent.companyId === companyId) {
+        const assigneeAgentId = req.body?.assigneeAgentId;
+        if (assigneeAgentId) {
+          const assignee = await agentsSvc.getById(assigneeAgentId);
+          if (assignee && assignee.reportsTo === actorAgent.id) return;
+          // Walk up the chain to check if assignee is a descendant
+          let current = assignee;
+          while (current && current.reportsTo) {
+            if (current.reportsTo === actorAgent.id) return;
+            current = await agentsSvc.getById(current.reportsTo);
+          }
+        }
+        // Agents can also self-assign
+        if (assigneeAgentId === actorAgent.id) return;
+      }
       throw forbidden("Missing permission: tasks:assign");
     }
     throw unauthorized();
+  }
+
+  async function assertIssueProjectAccess(req: Request, issue: { companyId: string; projectId: string | null }) {
+    if (req.actor.type !== "board" || !req.actor.userId || req.actor.isInstanceAdmin || req.actor.source === "local_implicit") return;
+    const membership = await db
+      .select({ membershipRole: companyMemberships.membershipRole })
+      .from(companyMemberships)
+      .where(and(eq(companyMemberships.companyId, issue.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, req.actor.userId)))
+      .then((rows) => rows[0] ?? null);
+    if (!membership || membership.membershipRole === "owner") return;
+    if (!issue.projectId) throw forbidden("You cannot access issues without a project");
+    const companyRow = await db.select({ metadata: companies.metadata }).from(companies).where(eq(companies.id, issue.companyId)).then((rows) => rows[0] ?? null);
+    const meta = (companyRow?.metadata ?? {}) as Record<string, unknown>;
+    const assignments = (meta.projectAssignments ?? {}) as Record<string, string[]>;
+    const userKey = `user:${req.actor.userId}`;
+    const assignedProjectIds = assignments[userKey] ?? [];
+    if (assignedProjectIds.length > 0 && !assignedProjectIds.includes(issue.projectId)) {
+      throw forbidden("You do not have access to this issue's project");
+    }
   }
 
   function requireAgentRunId(req: Request, res: Response) {
@@ -774,6 +819,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, existing.companyId);
+    await assertIssueProjectAccess(req, existing);
     const assigneeWillChange =
       (req.body.assigneeAgentId !== undefined && req.body.assigneeAgentId !== existing.assigneeAgentId) ||
       (req.body.assigneeUserId !== undefined && req.body.assigneeUserId !== existing.assigneeUserId);
@@ -976,6 +1022,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, existing.companyId);
+    await assertIssueProjectAccess(req, existing);
     const attachments = await svc.listAttachments(id);
 
     const issue = await svc.remove(id);

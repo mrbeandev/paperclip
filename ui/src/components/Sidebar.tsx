@@ -58,8 +58,6 @@ export function Sidebar() {
     enabled: !!selectedCompanyId,
     refetchInterval: 10_000,
   });
-  const liveRunCount = liveRuns?.length ?? 0;
-
   const { data: members } = useQuery({
     queryKey: queryKeys.access.members(selectedCompanyId!),
     queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
@@ -74,6 +72,20 @@ export function Sidebar() {
   }, [currentUser, members]);
 
   const isOwner = myMembership?.membershipRole === "owner";
+
+  const { data: subordinates } = useQuery({
+    queryKey: queryKeys.access.mySubordinates(selectedCompanyId!),
+    queryFn: () => accessApi.getMySubordinates(selectedCompanyId!),
+    enabled: !!selectedCompanyId && !isOwner,
+  });
+
+  // Scope live run count: owners see all, members only their subordinate agents
+  const liveRunCount = useMemo(() => {
+    const all = liveRuns ?? [];
+    if (isOwner || !subordinates || subordinates.isTopLevel) return all.length;
+    const allowed = new Set(subordinates.agentIds);
+    return all.filter((r) => allowed.has(r.agentId)).length;
+  }, [liveRuns, isOwner, subordinates]);
 
   // Check if member has any hierarchy assignment (reports to someone or has reports)
   const hasHierarchyAssignment = useMemo(() => {

@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: ["bind-palm-jefferson-slot.trycloudflare.com"],
     port: 5173,
     proxy: {
       "/api": {

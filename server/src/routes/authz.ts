@@ -1,5 +1,36 @@
 import type { Request } from "express";
+import { and, eq } from "drizzle-orm";
+import type { Db } from "@paperclipai/db";
+import { companyMemberships } from "@paperclipai/db";
 import { forbidden, unauthorized } from "../errors.js";
+
+let _db: Db | null = null;
+export function setAuthzDb(db: Db) { _db = db; }
+
+/**
+ * Asserts that the current board user is a company owner (or instance admin / local implicit).
+ * Use for admin-only mutations like delete company, edit company, create agents, etc.
+ */
+export async function assertOwner(req: Request, companyId: string) {
+  assertBoard(req);
+  assertCompanyAccess(req, companyId);
+  if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return;
+  if (!_db || !req.actor.userId) throw forbidden("Owner access required");
+  const membership = await _db
+    .select({ membershipRole: companyMemberships.membershipRole })
+    .from(companyMemberships)
+    .where(
+      and(
+        eq(companyMemberships.companyId, companyId),
+        eq(companyMemberships.principalType, "user"),
+        eq(companyMemberships.principalId, req.actor.userId),
+      ),
+    )
+    .then((rows) => rows[0] ?? null);
+  if (!membership || membership.membershipRole !== "owner") {
+    throw forbidden("Owner access required");
+  }
+}
 
 export function assertBoard(req: Request) {
   if (req.actor.type !== "board") {

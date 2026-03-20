@@ -31,7 +31,7 @@ import {
   secretService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAdapterModels } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
@@ -110,7 +110,17 @@ export function agentRoutes(db: Db) {
 
   async function assertCanUpdateAgent(req: Request, targetAgent: { id: string; companyId: string }) {
     assertCompanyAccess(req, targetAgent.companyId);
-    if (req.actor.type === "board") return;
+    if (req.actor.type === "board") {
+      // Owners and local_implicit can edit any agent; members only their subordinates
+      if (req.actor.isInstanceAdmin || req.actor.source === "local_implicit") return;
+      if (req.actor.userId) {
+        const visibleIds = await access.getVisibleAgentIds(targetAgent.companyId, req.actor.userId);
+        if (visibleIds === null) return; // top-level user, sees everything
+        if (visibleIds.includes(targetAgent.id)) return;
+        throw forbidden("You can only edit agents assigned to you");
+      }
+      return;
+    }
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
 
     const actorAgent = await svc.getById(req.actor.agentId);
@@ -1223,8 +1233,10 @@ export function agentRoutes(db: Db) {
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) { res.status(404).json({ error: "Agent not found" }); return; }
+    await assertCanUpdateAgent(req, existing);
     const agent = await svc.pause(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -1246,8 +1258,10 @@ export function agentRoutes(db: Db) {
   });
 
   router.post("/agents/:id/resume", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) { res.status(404).json({ error: "Agent not found" }); return; }
+    await assertCanUpdateAgent(req, existing);
     const agent = await svc.resume(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -1267,8 +1281,10 @@ export function agentRoutes(db: Db) {
   });
 
   router.post("/agents/:id/terminate", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) { res.status(404).json({ error: "Agent not found" }); return; }
+    await assertCanUpdateAgent(req, existing);
     const agent = await svc.terminate(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
@@ -1290,8 +1306,10 @@ export function agentRoutes(db: Db) {
   });
 
   router.delete("/agents/:id", async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) { res.status(404).json({ error: "Agent not found" }); return; }
+    await assertOwner(req, existing.companyId);
     const agent = await svc.remove(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });

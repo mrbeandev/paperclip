@@ -52,7 +52,7 @@ function defaultConfig(): PaperclipConfig {
       logDir: resolveDefaultLogsDir(instanceId),
     },
     server: {
-      deploymentMode: "local_trusted",
+      deploymentMode: "authenticated",
       exposure: "private",
       host: "127.0.0.1",
       port: 3100,

@@ -115,7 +115,7 @@ function quickstartDefaultsFromEnv(): {
     process.env.BETTER_AUTH_BASE_URL?.trim() ||
     undefined;
   const deploymentMode =
-    parseEnumFromEnv<DeploymentMode>(process.env.PAPERCLIP_DEPLOYMENT_MODE, DEPLOYMENT_MODES) ?? "local_trusted";
+    parseEnumFromEnv<DeploymentMode>(process.env.PAPERCLIP_DEPLOYMENT_MODE, DEPLOYMENT_MODES) ?? "authenticated";
   const deploymentExposureFromEnv = parseEnumFromEnv<DeploymentExposure>(
     process.env.PAPERCLIP_DEPLOYMENT_EXPOSURE,
     DEPLOYMENT_EXPOSURES,

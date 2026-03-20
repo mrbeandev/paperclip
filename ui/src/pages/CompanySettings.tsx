@@ -456,7 +456,7 @@ export function CompanySettings() {
               </div>
               <div className="mt-1 space-y-1.5">
                 <textarea
-                  className="h-[28rem] w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none"
+                  className="h-112 w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none"
                   value={inviteSnippet}
                   readOnly
                 />

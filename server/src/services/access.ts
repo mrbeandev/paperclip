@@ -318,7 +318,8 @@ export function accessService(db: Db) {
 
   /**
    * Returns the agent IDs visible to a user in a company, or null if the user
-   * is top-level (sees everything). Used for scope filtering in routes.
+   * is top-level owner (sees everything). Non-owner members with no hierarchy
+   * get an empty array (see no agents). Used for scope filtering in routes.
    */
   async function getVisibleAgentIds(
     companyId: string,
@@ -326,7 +327,9 @@ export function accessService(db: Db) {
   ): Promise<string[] | null> {
     const membership = await getMembership(companyId, "user", userId);
     if (!membership) return null;
-    if (!membership.reportsToUserId && !membership.reportsToAgentId) return null;
+    // Owners with no hierarchy see everything
+    if (membership.membershipRole === "owner" && !membership.reportsToUserId && !membership.reportsToAgentId) return null;
+    // Non-owner members with no hierarchy see nothing (empty array)
     const subordinates = await getSubordinates(companyId, userId);
     return subordinates.agentIds;
   }

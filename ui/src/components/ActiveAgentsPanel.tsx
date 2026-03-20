@@ -20,15 +20,20 @@ function isRunActive(run: LiveRunForIssue): boolean {
 
 interface ActiveAgentsPanelProps {
   companyId: string;
+  visibleAgentIds?: Set<string> | null;
 }
 
-export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
+export function ActiveAgentsPanel({ companyId, visibleAgentIds }: ActiveAgentsPanelProps) {
   const { data: liveRuns } = useQuery({
     queryKey: [...queryKeys.liveRuns(companyId), "dashboard"],
     queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
   });
 
-  const runs = liveRuns ?? [];
+  const runs = useMemo(() => {
+    const all = liveRuns ?? [];
+    if (!visibleAgentIds) return all; // null = show everything
+    return all.filter((r) => visibleAgentIds.has(r.agentId));
+  }, [liveRuns, visibleAgentIds]);
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(companyId),
     queryFn: () => issuesApi.list(companyId),

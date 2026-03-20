@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -319,16 +319,39 @@ function CloudAccessGate() {
   return <Outlet />;
 }
 
+function OwnerOnly({ children }: { children: React.ReactNode }) {
+  const { selectedCompanyId } = useCompany();
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId ?? "__none__"),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const isOwner = useMemo(() => {
+    if (!session?.user || !members) return null; // loading
+    const me = members.find((m) => m.principalType === "user" && m.principalId === session.user.id);
+    return me?.membershipRole === "owner";
+  }, [session, members]);
+
+  if (isOwner === null) return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  if (!isOwner) return <Navigate to="dashboard" replace />;
+  return <>{children}</>;
+}
+
 function boardRoutes() {
   return (
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
-      <Route path="overall-dashboard" element={<OverallDashboard />} />
+      <Route path="overall-dashboard" element={<OwnerOnly><OverallDashboard /></OwnerOnly>} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
-      <Route path="company/team-members" element={<TeamMembers />} />
+      <Route path="company/team-members" element={<OwnerOnly><TeamMembers /></OwnerOnly>} />
       <Route path="members/:userId" element={<MemberDetail />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
@@ -339,7 +362,7 @@ function boardRoutes() {
       <Route path="agents/active" element={<Agents />} />
       <Route path="agents/paused" element={<Agents />} />
       <Route path="agents/error" element={<Agents />} />
-      <Route path="agents/new" element={<NewAgent />} />
+      <Route path="agents/new" element={<OwnerOnly><NewAgent /></OwnerOnly>} />
       <Route path="agents/:agentId" element={<AgentDetail />} />
       <Route path="agents/:agentId/:tab" element={<AgentDetail />} />
       <Route path="agents/:agentId/runs/:runId" element={<AgentDetail />} />
@@ -357,14 +380,14 @@ function boardRoutes() {
       <Route path="issues/done" element={<Navigate to="/issues" replace />} />
       <Route path="issues/recent" element={<Navigate to="/issues" replace />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
-      <Route path="goals" element={<Goals />} />
-      <Route path="goals/:goalId" element={<GoalDetail />} />
+      <Route path="goals" element={<OwnerOnly><Goals /></OwnerOnly>} />
+      <Route path="goals/:goalId" element={<OwnerOnly><GoalDetail /></OwnerOnly>} />
       <Route path="approvals" element={<Navigate to="/approvals/pending" replace />} />
       <Route path="approvals/pending" element={<Approvals />} />
       <Route path="approvals/all" element={<Approvals />} />
       <Route path="approvals/:approvalId" element={<ApprovalDetail />} />
-      <Route path="costs" element={<Costs />} />
-      <Route path="activity" element={<Activity />} />
+      <Route path="costs" element={<OwnerOnly><Costs /></OwnerOnly>} />
+      <Route path="activity" element={<OwnerOnly><Activity /></OwnerOnly>} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/recent" element={<Inbox />} />
       <Route path="inbox/unread" element={<Inbox />} />

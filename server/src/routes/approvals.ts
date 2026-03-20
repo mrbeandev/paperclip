@@ -16,7 +16,7 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertOwner, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
@@ -119,8 +119,10 @@ export function approvalRoutes(db: Db) {
   });
 
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const approvalCheck = await svc.getById(id);
+    if (!approvalCheck) { res.status(404).json({ error: "Approval not found" }); return; }
+    await assertOwner(req, approvalCheck.companyId);
     const { approval, applied } = await svc.approve(
       id,
       req.body.decidedByUserId ?? "board",
@@ -214,8 +216,10 @@ export function approvalRoutes(db: Db) {
   });
 
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
-    assertBoard(req);
     const id = req.params.id as string;
+    const rejectCheck = await svc.getById(id);
+    if (!rejectCheck) { res.status(404).json({ error: "Approval not found" }); return; }
+    await assertOwner(req, rejectCheck.companyId);
     const { approval, applied } = await svc.reject(
       id,
       req.body.decidedByUserId ?? "board",

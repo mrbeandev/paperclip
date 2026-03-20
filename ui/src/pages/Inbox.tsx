@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
 import { dashboardApi } from "../api/dashboard";
 import { issuesApi } from "../api/issues";
@@ -239,6 +240,22 @@ export function Inbox() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { data: inboxSession } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
+  const { data: inboxMembers } = useQuery({
+    queryKey: queryKeys.access.members(selectedCompanyId!),
+    queryFn: () => accessApi.listCompanyMembers(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const isInboxOwner = useMemo(() => {
+    if (!inboxSession?.user || !inboxMembers) return true;
+    const me = inboxMembers.find((m) => m.principalType === "user" && m.principalId === inboxSession.user.id);
+    return me?.membershipRole === "owner";
+  }, [inboxSession, inboxMembers]);
+
   const [actionError, setActionError] = useState<string | null>(null);
   const [allCategoryFilter, setAllCategoryFilter] = useState<InboxCategoryFilter>("everything");
   const [allApprovalFilter, setAllApprovalFilter] = useState<InboxApprovalFilter>("all");
@@ -558,11 +575,11 @@ export function Inbox() {
       : tab === "unread"
         ? unreadTouchedIssues.length > 0
         : hasTouchedIssues;
-  const showJoinRequestsSection =
-    tab === "all" ? showJoinRequestsCategory && hasJoinRequests : hasJoinRequests;
-  const showApprovalsSection = tab === "all"
+  const showJoinRequestsSection = isInboxOwner &&
+    (tab === "all" ? showJoinRequestsCategory && hasJoinRequests : hasJoinRequests);
+  const showApprovalsSection = isInboxOwner && (tab === "all"
     ? showApprovalsCategory && filteredAllApprovals.length > 0
-    : actionableApprovals.length > 0;
+    : actionableApprovals.length > 0);
   const showFailedRunsSection =
     tab === "all" ? showFailedRunsCategory && hasRunFailures : tab === "unread" && hasRunFailures;
   const showAlertsSection = tab === "all" ? showAlertsCategory && hasAlerts : tab === "unread" && hasAlerts;
@@ -686,17 +703,20 @@ export function Inbox() {
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 {tab === "unread" ? "Approvals Needing Action" : "Approvals"}
               </h3>
-              {approvalsToRender.length > 1 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  disabled={approveAllMutation.isPending}
-                  onClick={() => approveAllMutation.mutate(approvalsToRender.map((a) => a.id))}
-                >
-                  {approveAllMutation.isPending ? "Approving…" : `Approve all (${approvalsToRender.length})`}
-                </Button>
-              )}
+              {(() => {
+                const pendingApprovals = approvalsToRender.filter((a) => ACTIONABLE_APPROVAL_STATUSES.has(a.status));
+                return pendingApprovals.length > 1 ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={approveAllMutation.isPending}
+                    onClick={() => approveAllMutation.mutate(pendingApprovals.map((a) => a.id))}
+                  >
+                    {approveAllMutation.isPending ? "Approving…" : `Approve all (${pendingApprovals.length})`}
+                  </Button>
+                ) : null;
+              })()}
             </div>
             <div className="grid gap-3">
               {approvalsToRender.map((approval) => (

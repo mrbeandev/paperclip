@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useParams, Link, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { accessApi, type CompanyMember } from "../api/access";
+import { authApi } from "../api/auth";
 import { agentsApi } from "../api/agents";
 import { activityApi } from "../api/activity";
 import { useCompany } from "../context/CompanyContext";
@@ -21,6 +22,12 @@ export function MemberDetail() {
   const { userId, companyPrefix } = useParams<{ userId: string; companyPrefix: string }>();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    retry: false,
+  });
 
   const { data: allMembers, isLoading: membersLoading } = useQuery({
     queryKey: queryKeys.access.members(selectedCompanyId!),
@@ -79,12 +86,18 @@ export function MemberDetail() {
       .slice(0, 20);
   }, [activity, userId]);
 
+  const isOwner = useMemo(() => {
+    if (!session?.user || !allMembers) return false;
+    const me = allMembers.find((m) => m.principalType === "user" && m.principalId === session.user.id);
+    return me?.membershipRole === "owner";
+  }, [session, allMembers]);
+
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Team Members", href: `/${companyPrefix}/company/team-members` },
+      ...(isOwner ? [{ label: "Team Members", href: `/${companyPrefix}/company/team-members` }] : []),
       { label: member?.userName ?? member?.userEmail ?? "Member" },
     ]);
-  }, [setBreadcrumbs, companyPrefix, member]);
+  }, [setBreadcrumbs, companyPrefix, member, isOwner]);
 
   if (membersLoading) return <PageSkeleton />;
 
