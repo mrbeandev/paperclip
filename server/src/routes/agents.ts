@@ -578,7 +578,10 @@ export function agentRoutes(db: Db) {
     const scopeIds = (req.actor.type === "board" && req.actor.userId && !req.actor.isInstanceAdmin && req.actor.source !== "local_implicit")
       ? await access.getVisibleAgentIds(companyId, req.actor.userId)
       : null;
-    if (scopeIds && scopeIds.length > 0) {
+    if (scopeIds !== null && scopeIds.length === 0) {
+      // Member has no visible agents — return empty tree
+      leanTree = [];
+    } else if (scopeIds && scopeIds.length > 0) {
       const allowed = new Set(scopeIds);
       // Flatten full tree, tracking each node's parent
       const nodeMap = new Map<string, { lean: Record<string, unknown>; parentId: string | null }>();

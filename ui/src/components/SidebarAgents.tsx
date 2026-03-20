@@ -92,18 +92,16 @@ export function SidebarAgents({ isOwner = false }: { isOwner?: boolean }) {
               Agents
             </span>
           </CollapsibleTrigger>
-          {isOwner && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                openNewAgent();
-              }}
-              className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-              aria-label="New agent"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openNewAgent();
+            }}
+            className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
+            aria-label="New agent"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
         </div>
       </div>
 
