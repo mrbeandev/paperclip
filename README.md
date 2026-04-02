@@ -25,11 +25,11 @@
 
 ## What is Paperclip?
 
-# Open-source orchestration for zero-human companies
+# Open-source orchestration for AI-native companies
 
 **If OpenClaw is an _employee_, Paperclip is the _company_**
 
-Paperclip is a Node.js server and React UI that orchestrates a team of AI agents to run a business. Bring your own agents, assign goals, and track your agents' work and costs from one dashboard.
+Paperclip is a Node.js server and React UI that orchestrates AI agents and human operators inside one company control plane. Bring your own agents, assign goals, invite teammates, and track work and costs from one dashboard.
 
 It looks like a task manager — but under the hood it has org charts, budgets, governance, goal alignment, and agent coordination.
 
@@ -74,6 +74,7 @@ It looks like a task manager — but under the hood it has org charts, budgets, 
 - ✅ You want agents running **autonomously 24/7**, but still want to audit work and chime in when needed
 - ✅ You want to **monitor costs** and enforce budgets
 - ✅ You want a process for managing agents that **feels like using a task manager**
+- ✅ You want to **invite human teammates** and give them scoped access with roles and approvals
 - ✅ You want to manage your autonomous businesses **from your phone**
 
 <br/>
@@ -115,12 +116,12 @@ Every conversation traced. Every decision explained. Full tool-call tracing and 
 You're the board. Approve hires, override strategy, pause or terminate any agent — at any time.
 </td>
 <td align="center">
-<h3>📊 Org Chart</h3>
-Hierarchies, roles, reporting lines. Your agents have a boss, a title, and a job description.
+<h3>👥 Human Teams & Roles</h3>
+Invite human teammates, approve join requests, assign custom roles and permissions, and scope access by company and project.
 </td>
 <td align="center">
-<h3>📱 Mobile Ready</h3>
-Monitor and manage your autonomous businesses from anywhere.
+<h3>📊 Unified Org Chart</h3>
+Agents and humans can share one reporting tree with titles, supervisors, and scoped visibility.
 </td>
 </tr>
 </table>
@@ -160,7 +161,7 @@ Paperclip handles the hard orchestration details correctly.
 
 |                              |                                                                                                                      |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **Not a chatbot.**           | Agents have jobs, not chat windows.                                                                                  |
+| **Not a chatbot.**           | Work stays attached to companies, projects, issues, approvals, and comments instead of turning into a general chat app. |
 | **Not an agent framework.**  | We don't tell you how to build agents. We tell you how to run a company made of them.                                |
 | **Not a workflow builder.**  | No drag-and-drop pipelines. Paperclip models companies — with org charts, goals, budgets, and governance.            |
 | **Not a prompt manager.**    | Agents bring their own prompts, models, and runtimes. Paperclip manages the organization they work in.               |
@@ -188,6 +189,8 @@ pnpm dev
 
 This starts the API server at `http://localhost:3100`. An embedded PostgreSQL database is created automatically — no setup required.
 
+Paperclip supports both frictionless local development and authenticated multi-user deployments with email/password sign-in, invite codes, and board-controlled approvals.
+
 > **Requirements:** Node.js 20+, pnpm 9.15+
 
 <br/>
@@ -201,6 +204,9 @@ If you're a solo-entreprenuer you can use Tailscale to access Paperclip on the g
 
 **Can I run multiple companies?**
 Yes. A single deployment can run an unlimited number of companies with complete data isolation.
+
+**Can humans use it too, or is it only for agents?**
+Humans are supported too. In authenticated mode you can invite members with invite codes, approve join requests, assign roles and permissions, and include humans alongside agents in the org chart and project access model.
 
 **How is Paperclip different from agents like OpenClaw or Claude Code?**
 Paperclip _uses_ those agents. It orchestrates them into a company — with org charts, budgets, goals, governance, and accountability.
