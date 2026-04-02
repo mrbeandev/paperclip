@@ -232,6 +232,30 @@ async function runGit(args: string[], cwd: string): Promise<string> {
   return proc.stdout.trim();
 }
 
+async function detectDefaultBranch(repoRoot: string): Promise<string | null> {
+  try {
+    const remoteHead = await runGit(
+      ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+      repoRoot,
+    );
+    const branch = remoteHead?.startsWith("origin/") ? remoteHead.slice("origin/".length) : remoteHead;
+    if (branch) return branch;
+  } catch {
+    // Fall through to heuristic detection when origin/HEAD is not set.
+  }
+
+  for (const candidate of ["main", "master"]) {
+    try {
+      await runGit(["rev-parse", "--verify", `refs/remotes/origin/${candidate}`], repoRoot);
+      return candidate;
+    } catch {
+      // Try the next common default branch name.
+    }
+  }
+
+  return null;
+}
+
 async function directoryExists(value: string) {
   return fs.stat(value).then((stats) => stats.isDirectory()).catch(() => false);
 }
